@@ -1,6 +1,6 @@
 ---
 name: context-management
-description: Agentic context management for pi sessions using pi-control: anchors, pivots, cross-session recall, cross-model handoff, and review loops. Use when continuing or recalling prior work, at task boundaries, before risky or irreversible changes, after repeated failures or direction shifts, when context is under pressure, or for cross-model review and second opinions.
+description: "Agentic context management for pi sessions using pi-control: anchors, pivots, cross-session recall, cross-model handoff, and review loops. Use when continuing or recalling prior work, at task boundaries, before risky or irreversible changes, after repeated failures or direction shifts, when context is under pressure, or for cross-model review and second opinions."
 ---
 
 # Context Management
