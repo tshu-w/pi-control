@@ -209,12 +209,16 @@ export function registerContextRouter(pi: ExtensionAPI) {
 					if (targetId === ctx.sessionManager.getLeafId()) {
 						return { content: [{ type: "text", text: "Pivot target is already the current leaf. Choose an earlier anchor or entry." }], details: {} };
 					}
+					const preLeafId = ctx.sessionManager.getLeafId();
+					const carryoverWithReturn = preLeafId
+						? `${params.carryover}\n\n[Pivot from entry: ${preLeafId.slice(0, 12)}; pivot(target="${preLeafId.slice(0, 12)}") to return.]`
+						: params.carryover!;
 					return scheduleAction({
 						fallbackHint: "Use built-in `/tree` to navigate instead.",
 						action: {
 							kind: "pivot",
 							targetId,
-							carryover: params.carryover!,
+							carryover: carryoverWithReturn,
 							message: params.message,
 						},
 						successText: `Scheduled pivot to ${params.target} (${targetId.slice(0, 8)})${params.message ? " (with custom followUp message)" : ""}.`,

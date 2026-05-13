@@ -35,8 +35,8 @@ The `message` is injected as a user message into the target session, driving its
 
 Signals: subtask complete, about to do something risky, user confirmed a decision, phase shifting (plan→implement), heavy tool-use coming, non-trivial state since last anchor.
 
-- `name`: short phase/intent (`"plan-done"`, `"auth-impl"`, `"review-round-2"`)
-- `summary`: what's done/known/decided — **retrospective, not todo**
+- `name`: short phase/intent. Suggested format `<task-slug>-<phase>` (e.g. `auth-jwt-start`, `runner-timeout-impl`, `review-round-2`).
+- `summary`: what's done/known/decided — **retrospective, not todo**.
 
 Bad: `anchor(name="add-tests", summary="will add tests next")` — that's a todo.
 Good: `anchor(name="auth-impl-done", summary="auth flow implemented; tests next")`.
@@ -83,6 +83,43 @@ end on the implementor; loop until reviewer approves or you stop.
 ```
 
 For narrow one-shot opinions (consult, single question), use `models(consult, ...)` instead of switching — no full session handoff.
+
+## Recipes
+
+### Research then return
+
+You need to read a long doc / many files to decide, but the reading itself is noise.
+
+```
+context(anchor, name="auth-lib-choice-start", summary="about to evaluate PyJWT vs python-jose vs authlib for agent auth.")
+# ... read 3 docs, skim 20 files ...
+context(anchor, name="auth-lib-chosen-pyjwt", summary="chose PyJWT: active maintenance, stdlib-only deps, jose archives too much unused algo surface.")
+# older tool-heavy entries are now auto-truncated before the start anchor.
+```
+
+Result: decision preserved, research noise dropped, no compact needed.
+
+### Pivot to retry
+
+Current approach failed twice. Roll back to a known-good anchor, carry the lessons across.
+
+```
+context(pivot,
+  target="runner-timeout-start",
+  carryover="Tried asyncio.wait_for (hung on cancel) and signal.alarm (not thread-safe). Switching to asyncio.timeout + TaskGroup.",
+  message="Implement the TaskGroup-based variant; ignore previous attempts.")
+```
+
+## Anti-Patterns
+
+| Don't | Do |
+|---|---|
+| Anchor every step (`step1-done`, `step2-done`) | Anchor phase changes (`plan-done`, `impl-done`) |
+| Summarize as "discussed X" or "working on Y" | Summarize the outcome: decision, completed work, failure mode |
+| Pivot without carryover (lose all learnings) | Carryover = attempts, decisions, lessons worth keeping |
+| Compact when the real problem is a 10KB curl dump | Externalize large tool output to `/tmp` first, read targeted sections |
+| Guess anchor/entry IDs for pivot | `view` first, confirm the target |
+| Leave a cross-model loop ending on the reviewer | End on the implementor so the next turn is action, not critique |
 
 ## Rules
 
