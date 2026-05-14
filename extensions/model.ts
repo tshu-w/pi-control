@@ -106,7 +106,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			provider: Type.Optional(Type.String({ description: "Model provider. Optional if modelId uses provider/modelId or is unambiguous. For switch/consult." })),
 			modelId: Type.Optional(Type.String({ description: 'Model ID or provider/modelId, e.g. "gpt-5.5" or "openai-codex/gpt-5.5". For switch/consult.' })),
 			thinkingLevel: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level. For switch or consult." })),
-			message: Type.Optional(Type.String({ description: "Optional continuation message after switching. For switch." })),
+			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For switch." })),
 			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: '"followUp" (default) or "steer". For switch (with message).' })),
 			// consult params
 			prompt: Type.Optional(Type.String({ description: "Prompt to send. For consult." })),

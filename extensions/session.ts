@@ -41,7 +41,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			// name params
 			name: Type.Optional(Type.String({ description: "Display name for the session. For name." })),
 			// queue_message params (also used as followUp for resume/new/reload)
-			message: Type.Optional(Type.String({ description: "Message content. For queue_message: queued in the current session. For resume/new: sent to the target session via withSession. For reload: sent as followUp in current session after reload." })),
+			message: Type.Optional(Type.String({ description: "Message content delivered as a user message. For queue_message: the queued body. For resume/new/reload: a next-turn directive." })),
 			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: '"followUp" (default) or "steer". For queue_message.' })),
 		}),
 		async execute(_id, params, signal, _onUpdate, ctx) {
