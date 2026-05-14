@@ -30,7 +30,7 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 ## Example: cross-model review loop
 
 ```mermaid
-%%{init: {'theme':'neutral','sequence':{'mirrorActors':false,'actorMargin':80,'messageMargin':25,'boxMargin':5,'noteMargin':5}}}%%
+%%{init: {'theme':'neutral','sequence':{'mirrorActors':false,'actorMargin':80,'messageMargin':25,'boxMargin':5,'noteMargin':5,'width':110,'height':40}}}%%
 sequenceDiagram
     participant claude
     participant gpt
@@ -39,7 +39,6 @@ sequenceDiagram
     claude->>gpt: switch(review)
     loop until approved
         gpt->>claude: switch(fix)
-        claude->>claude: anchor(v+1)
         claude->>gpt: switch(review)
     end
     gpt-->>claude: approved
@@ -60,7 +59,7 @@ To drive `resume` / `new` / `navigate` / `fork` / `pivot` from tool calls, pi-co
 
 The patch is idempotent and applied once on activation. If it fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; tested against `@earendil-works/pi-coding-agent` 0.74.x.
 
-When pi adds first-class APIs, the hack goes away.
+When pi adds first-class APIs, the hack goes away. Tracking upstream at [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
 ## License
 
