@@ -25,7 +25,11 @@ export type PendingAction =
 	| { kind: "nav"; targetId: string; summarize?: boolean; customInstructions?: string; message?: string }
 	| { kind: "fork"; id: string; message?: string }
 	| { kind: "pivot"; targetId: string; carryover: string; message?: string }
-	| { kind: "reload"; message?: string };
+	| { kind: "reload"; message?: string }
+	/** Raw op scheduled by the `commands` router when a third-party handler
+	 *  invoked one of the session-transition closures via mediated ctx.
+	 *  The exec closure is responsible for calling _ops.* directly. */
+	| { kind: "rawOp"; token: symbol; label: string; exec: () => Promise<void> };
 
 /** The pivot action payload. Useful for hooks that introspect the active pivot. */
 export type PendingPivot = Extract<PendingAction, { kind: "pivot" }>;
@@ -61,12 +65,16 @@ export interface CommandOps {
 let _ops: CommandOps | null = null;
 let _pending: PendingAction | null = null;
 let _activePivot: PendingPivot | null = null;
+let _runner: any = null;
 
 // ── Accessors ───────────────────────────────────────────────
 
 export function isArmed(): boolean { return _ops !== null; }
 export function hasPending(): boolean { return _pending !== null; }
 export function getActivePivot(): PendingPivot | null { return _activePivot; }
+/** The ExtensionRunner instance, captured opportunistically inside bindCommandContext.
+ *  Used by the `commands` router to enumerate/run third-party slash commands. */
+export function getRunner(): any { return _runner; }
 
 export function clearPending(): void {
 	_pending = null;
@@ -110,6 +118,31 @@ export function scheduleAction(params: ScheduleParams): { content: Array<{ type:
 	};
 }
 
+/** Lower-level helper for the commands router: schedule a raw op without the
+ *  scheduleAction success-text plumbing. Returns the reason if not armed or busy. */
+export function scheduleRawOp(label: string, exec: () => Promise<void>): { ok: true; token: symbol } | { ok: false; reason: string } {
+	if (!isArmed()) return { ok: false, reason: "command context not captured (pi-control patch inactive)" };
+	if (hasPending()) return { ok: false, reason: `another pending action (${_pending?.kind}) is already queued` };
+	const token = Symbol(label);
+	_pending = { kind: "rawOp", token, label, exec };
+	return { ok: true, token };
+}
+
+export function isPendingRawOp(token: symbol): boolean {
+	return _pending?.kind === "rawOp" && _pending.token === token;
+}
+
+export function clearPendingRawOp(token: symbol): boolean {
+	if (!isPendingRawOp(token)) return false;
+	clearPending();
+	return true;
+}
+
+/** Access to the captured ops for the commands router. Prefer scheduleRawOp
+ *  in normal flows; this exists for the rare case where a handler needs to
+ *  invoke an op synchronously with bespoke wiring. */
+export function getOps(): CommandOps | null { return _ops; }
+
 // ── Patch ───────────────────────────────────────────────────
 
 let _patched = false;
@@ -128,6 +161,9 @@ export function patchBindCommandContext(): boolean {
 				fork: actions.fork,
 				reload: actions.reload,
 			} : null;
+			// Capture runner instance so the commands router can call
+			// getRegisteredCommands() / createCommandContext() without a separate hook.
+			_runner = this;
 			return orig.call(this, actions);
 		};
 
@@ -238,6 +274,13 @@ export async function runPending(
 				await _ops.reload();
 				if (action.message && runtime) await runtime.sendFollowUp(action.message);
 			} catch (e) { reportError("Reload failed", e); }
+			return;
+		}
+
+		case "rawOp": {
+			try {
+				await action.exec();
+			} catch (e) { reportError(`Command-triggered ${action.label} failed`, e); }
 			return;
 		}
 

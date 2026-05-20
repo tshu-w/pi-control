@@ -1,11 +1,12 @@
 /**
  * Pi Control — self-control layer for pi.
  *
- * 4 router tools, always active:
+ * 5 router tools, always active:
  *   context   — context management (view, recall, anchor, pivot)
  *   sessions  — session management (info, search, resume, new, name, queue_message, reload)
  *   tree      — session entry operations (list, search, labels, set_label, navigate, fork, compact)
  *   models    — model listing, switching, and consultation
+ *   commands  — dispatch arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls
  *
  * Also registers a context event hook to:
  *   - truncate old tool results (before the last anchor) to save context window
@@ -24,6 +25,7 @@ import { registerContextRouter } from "./context/router.js";
 import { registerSessionsRouter } from "./session.js";
 import { registerTreeRouter } from "./tree.js";
 import { registerModelsRouter } from "./model.js";
+import { registerCommandsRouter } from "./commands.js";
 
 export default function (pi: ExtensionAPI) {
 	// Patch ExtensionRunner to auto-capture command context actions.
@@ -33,6 +35,7 @@ export default function (pi: ExtensionAPI) {
 	registerSessionsRouter(pi);
 	registerTreeRouter(pi);
 	registerModelsRouter(pi);
+	registerCommandsRouter(pi);
 
 	// ── Context event: truncate old tool results + anchor reminder ──
 	// Receives AgentMessage[]. Anchors are toolResults with toolName=="context" and details.anchor.
