@@ -37,7 +37,7 @@
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 
 class DeferredTransitionRequested extends Error {
@@ -193,7 +193,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			"Invoke arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls.",
 			"list: enumerate all registered slash commands (name, description, source).",
 			"run: execute a slash command by name with optional argument string.",
-			"For pi-control's own routes (sessions/tree/context/models), use those tools directly — they offer structured args and safer scheduling.",
+			"For pi-control's own routes (sessions/tree/models), use those tools directly — they offer structured args and safer scheduling.",
 		].join(" "),
 		promptSnippet: "Third-party slash commands: list, run",
 		promptGuidelines: [

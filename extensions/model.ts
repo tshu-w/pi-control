@@ -1,7 +1,7 @@
 import { complete, getModel, StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { getEnabledModels } from "./utils.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -56,7 +56,7 @@ async function resolveModel(
 	if (resolvedProvider) {
 		const found = ctx.modelRegistry.find(resolvedProvider, resolvedModelId);
 		if (found) return { model: found };
-		if (opts?.includeUnregistered) return { model: getModel(resolvedProvider, resolvedModelId) };
+		if (opts?.includeUnregistered) return { model: getModel(resolvedProvider as any, resolvedModelId) };
 		return { model: null };
 	}
 

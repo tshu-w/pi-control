@@ -1,13 +1,12 @@
 {
 	"name": "pi-control",
 	"version": "0.1.0",
-	"description": "Context management extension and skill for pi sessions: anchors, pivots, cross-session recall, cross-model handoff, and review loops.",
-	"keywords": ["pi-package", "pi-extension", "context-management", "anchor", "pivot"],
+	"description": "Runtime control extension for pi sessions, tree navigation, models, and slash commands.",
+	"keywords": ["pi-package", "pi-extension", "runtime-control", "session", "tree"],
 	"license": "MIT",
 	"repository": "github:tshu-w/pi-control",
 	"pi": {
-		"extensions": ["./extensions"],
-		"skills": ["./skills"]
+		"extensions": ["./extensions"]
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

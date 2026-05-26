@@ -1,12 +1,27 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
-import { getAnchors } from "./context/anchors.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
+
+function resolveNavigateTarget(sm: any, target: string): any | null {
+	const direct = sm.getEntry(target);
+	if (direct) return direct;
+
+	const lower = target.toLowerCase();
+	const idMatches = sm.getEntries().filter((e: any) =>
+		typeof e.id === "string" && e.id.toLowerCase().startsWith(lower)
+	);
+	if (idMatches.length === 1) return idMatches[0];
+
+	for (const e of sm.getEntries()) {
+		if (sm.getLabel((e as any).id) === target) return e;
+	}
+	return null;
+}
 
 export function registerTreeRouter(pi: ExtensionAPI) {
 	pi.registerTool({
@@ -17,8 +32,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			"list: browse current-branch entries or a session-wide branch overview.",
 			"search: find entries by keyword.",
 			"labels: show labeled/bookmarked entries.",
-			"set_label: set or clear a label on an entry (lightweight bookmark; use context(anchor) for checkpoints with summary).",
-			"navigate: jump to a different point in the session tree (low-level; use context(pivot) for deliberate recovery with carryover).",
+			"set_label: set or clear a label on an entry.",
+			"navigate: jump to a different point in the session tree by entry ID/prefix or label.",
 			"fork: create a new session forked before a specific user-message entry.",
 			"compact: summarize older messages to free up context window (irreversible within session).",
 		].join(" "),
@@ -44,9 +59,10 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			// search params
 			keyword: Type.Optional(Type.String({ description: "Search keyword (case-insensitive). For search." })),
 			// navigate / fork / set_label params
-			entryId: Type.Optional(Type.String({ description: "Target entry ID (8-char hex). For navigate/fork/set_label." })),
+			entryId: Type.Optional(Type.String({ description: "Target entry ID. For fork/set_label; also accepted for navigate compatibility." })),
+			target: Type.Optional(Type.String({ description: "Target entry ID/prefix or label. For navigate." })),
 			label: Type.Optional(Type.String({ description: "Label to set. Omit to clear. For set_label." })),
-			summarize: Type.Optional(Type.Boolean({ description: "Summarize abandoned branch. Default: false. For navigate. (context(pivot) always summarizes regardless.)" })),
+			summarize: Type.Optional(Type.Boolean({ description: "Summarize abandoned branch. Default: false. For navigate." })),
 			customInstructions: Type.Optional(Type.String({ description: "Custom instructions for context summarization. For navigate/compact." })),
 			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For navigate/fork/compact. Omit to leave the agent idle." })),
 		}),
@@ -276,15 +292,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						}
 					}
 
-					// Reject collisions with anchor names so target names stay unambiguous across context and tree.
-					const anchorMatch = getAnchors(ctx.sessionManager).find(a => a.data.name === params.label);
-					if (anchorMatch) {
-						return {
-							content: [{ type: "text", text: `"${params.label}" is already used by an anchor. Choose a different label.` }],
-							details: {},
-						};
-					}
-
 					pi.setLabel(params.entryId, params.label);
 					return {
 						content: [{ type: "text", text: `Label "${params.label}" set on [${params.entryId.slice(0, 8)}].` }],
@@ -294,27 +301,28 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 				// ── navigate ────────────────────────────────────────
 				case "navigate": {
-					if (!params.entryId) {
-						return { content: [{ type: "text", text: "`entryId` is required for navigate." }], details: {} };
+					const rawTarget = params.target ?? params.entryId;
+					if (!rawTarget) {
+						return { content: [{ type: "text", text: "`target` is required for navigate." }], details: {} };
 					}
-					const target = ctx.sessionManager.getEntry(params.entryId);
-					if (!target) {
-						return { content: [{ type: "text", text: `Entry not found: ${params.entryId}` }], details: {} };
+					const navEntry = resolveNavigateTarget(ctx.sessionManager, rawTarget);
+					if (!navEntry) {
+						return { content: [{ type: "text", text: `Target not found: ${rawTarget}` }], details: {} };
 					}
-					if (params.entryId === ctx.sessionManager.getLeafId()) {
-						return { content: [{ type: "text", text: `Already at entry: ${params.entryId}` }], details: { entryId: params.entryId } };
+					if (navEntry.id === ctx.sessionManager.getLeafId()) {
+						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
 					}
 					return scheduleAction({
 						fallbackHint: "Use built-in `/tree` instead.",
 						action: {
 							kind: "nav",
-							targetId: target.id,
+							targetId: navEntry.id,
 							summarize: params.summarize ?? false,
 							customInstructions: params.customInstructions,
 							message: params.message,
 						},
-						successText: `Scheduled tree navigation to entry: ${target.id}${params.message ? " (with followUp message)" : ""}`,
-						details: { scheduled: "navigate", entryId: target.id, message: params.message },
+						successText: `Scheduled tree navigation to entry: ${navEntry.id}${params.message ? " (with followUp message)" : ""}`,
+						details: { scheduled: "navigate", entryId: navEntry.id, target: rawTarget, message: params.message },
 					});
 				}
 

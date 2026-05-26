@@ -24,15 +24,11 @@ export type PendingAction =
 	| { kind: "new"; parentSession?: string; message?: string }
 	| { kind: "nav"; targetId: string; summarize?: boolean; customInstructions?: string; message?: string }
 	| { kind: "fork"; id: string; message?: string }
-	| { kind: "pivot"; targetId: string; carryover: string; message?: string }
 	| { kind: "reload"; message?: string }
 	/** Raw op scheduled by the `commands` router when a third-party handler
 	 *  invoked one of the session-transition closures via mediated ctx.
 	 *  The exec closure is responsible for calling _ops.* directly. */
 	| { kind: "rawOp"; token: symbol; label: string; exec: () => Promise<void> };
-
-/** The pivot action payload. Useful for hooks that introspect the active pivot. */
-export type PendingPivot = Extract<PendingAction, { kind: "pivot" }>;
 
 export interface RuntimeContext {
 	sendFollowUp: (msg: string) => Promise<void>;
@@ -64,21 +60,18 @@ export interface CommandOps {
 
 let _ops: CommandOps | null = null;
 let _pending: PendingAction | null = null;
-let _activePivot: PendingPivot | null = null;
 let _runner: any = null;
 
 // ── Accessors ───────────────────────────────────────────────
 
 export function isArmed(): boolean { return _ops !== null; }
 export function hasPending(): boolean { return _pending !== null; }
-export function getActivePivot(): PendingPivot | null { return _activePivot; }
 /** The ExtensionRunner instance, captured opportunistically inside bindCommandContext.
  *  Used by the `commands` router to enumerate/run third-party slash commands. */
 export function getRunner(): any { return _runner; }
 
 export function clearPending(): void {
 	_pending = null;
-	_activePivot = null;
 }
 
 /**
@@ -250,22 +243,6 @@ export async function runPending(
 				const r = await _ops.fork(action.id, opts);
 				if (r.cancelled) notify?.("Fork cancelled", "warning");
 			} catch (e) { reportError("Fork failed", e); }
-			return;
-		}
-
-		case "pivot": {
-			if (!runtime) {
-				reportError("Pivot failed: runtime context not available");
-				return;
-			}
-			try {
-				// Let navigateTree build the new branch summary so agent state stays in sync.
-				_activePivot = action;
-				const r = await _ops.navigateTree(action.targetId, { summarize: true });
-				if (r.cancelled) notify?.("Pivot cancelled", "warning");
-				else if (action.message) await runtime.sendFollowUp(action.message);
-			} catch (e) { reportError("Pivot failed", e); }
-			finally { _activePivot = null; }
 			return;
 		}
 

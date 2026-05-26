@@ -5,7 +5,7 @@
  *   - current branch as spine
  *   - side branches grouped under their fork points
  *
- * No anchor awareness — tree is the structural layer.
+ * No semantic-memory awareness — tree is the structural layer.
  * Labels on entries are shown if present.
  */
 

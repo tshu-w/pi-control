@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { getSessionsDir, scanSessions } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 
