@@ -21,11 +21,11 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		].join(" "),
 		promptSnippet: "Manage pi runtime sessions",
 		promptGuidelines: [
-			"Use sessions(action='info') to check the current model, token usage, cwd, and session file.",
 			"Use sessions(action='search') to find past sessions, then sessions(action='resume', sessionFile=...) to switch.",
 			"Ask before resume or new unless the user explicitly requested it; they change the active session.",
 			"Use sessions(action='queue_message') to send a follow-up user message in the current session.",
 			"Pass message= to resume/new/reload to send a follow-up user message after the transition.",
+			"Use sessions(action='info') to check the current model, token usage, cwd, and session file.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["info", "search", "resume", "new", "name", "queue_message", "reload"] as const, {
