@@ -249,7 +249,20 @@ export async function runPending(
 		case "reload": {
 			try {
 				await _ops.reload();
-				if (action.message && runtime) await runtime.sendFollowUp(action.message);
+				if (action.message) {
+					// After reload, _runner is re-captured by the prototype patch
+					// during _buildRuntime. Use the fresh extension runtime so the
+					// message goes through the new session, not the stale pre-reload
+					// pi closure. createCommandContext() intentionally does not expose
+					// sendUserMessage except for replaced-session callbacks.
+					try {
+						const sendUserMessage = _runner?.runtime?.sendUserMessage;
+						if (typeof sendUserMessage !== "function") throw new Error("fresh runtime has no sendUserMessage");
+						await Promise.resolve(sendUserMessage(action.message, { deliverAs: "followUp" }));
+					} catch (e) {
+						reportError("Post-reload message delivery failed", e);
+					}
+				}
 			} catch (e) { reportError("Reload failed", e); }
 			return;
 		}
