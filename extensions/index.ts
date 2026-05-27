@@ -118,6 +118,9 @@ export default function (pi: ExtensionAPI) {
 
 	// Clear stale pending state on session shutdown.
 	pi.on("session_shutdown", async () => {
+		if (hasPending()) {
+			console.warn("[pi-control] session_shutdown fired while a transition was pending; dropping it.");
+		}
 		clearPending();
 	});
 }
