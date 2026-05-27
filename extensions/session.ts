@@ -3,7 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getSessionsDir, scanSessions } from "./utils.js";
-import { scheduleAction } from "./command-actions.js";
+import { scheduleAction, hasPending } from "./command-actions.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
 	pi.registerTool({
@@ -147,6 +147,9 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 				case "queue_message": {
 					if (!params.message) {
 						return { content: [{ type: "text", text: "`message` is required for queue_message." }], details: {} };
+					}
+					if (hasPending()) {
+						return { content: [{ type: "text", text: "A session transition is already scheduled. Use the transition's `message` parameter instead of queue_message." }], details: {} };
 					}
 					const deliverAs = params.deliverAs ?? "followUp";
 					pi.sendUserMessage(params.message, { deliverAs });
