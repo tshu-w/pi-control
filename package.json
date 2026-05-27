@@ -1,6 +1,6 @@
 {
 	"name": "pi-control",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Runtime control extension for pi sessions, tree navigation, models, and slash commands.",
 	"keywords": ["pi-package", "pi-extension", "runtime-control", "session", "tree"],
 	"license": "MIT",
