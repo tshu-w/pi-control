@@ -37,12 +37,13 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			"fork: create a new session forked before a specific user-message entry.",
 			"compact: summarize older messages to free up context window (irreversible within session).",
 		].join(" "),
-		promptSnippet: "Session tree: list, search, labels, set_label, navigate, fork, compact",
+		promptSnippet: "Browse and navigate current pi session tree",
 		promptGuidelines: [
-			"Use tree(action='list') or tree(action='search') to find entry IDs before navigate or fork.",
-			"For fork, choose a user-message entry ID.",
+			"Use tree(action='list') or tree(action='search') to find entry IDs before navigate, fork, or set_label.",
+			"tree(action='fork') branches from an existing user turn; choose an entry whose role is user, or the call is rejected.",
+			"Use tree(action='navigate') to jump to an entry or label; ask first unless explicitly requested.",
 			"Use tree(action='set_label', entryId, label) to bookmark an entry; omit label to clear.",
-			"Use tree(action='compact') when context usage is high; compact rewrites older history irreversibly within the session.",
+			"Use tree(action='compact') when context usage is high; it rewrites older history irreversibly within the session.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "search", "labels", "set_label", "navigate", "fork", "compact"] as const, {

@@ -88,12 +88,12 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			"switch: change active model for subsequent turns; preferably include `message` to continue work immediately.",
 			"consult: one-shot call to another model (no tool access, result inline).",
 		].join(" "),
-		promptSnippet: "Model control: list, switch, consult",
+		promptSnippet: "List, switch, or consult pi models",
 		promptGuidelines: [
-			"Use models(action='list') to discover available scoped models before switching.",
-			"Prefer models(action='switch', ..., message=...) when handing work to another model.",
-			"Use models(action='consult') for second opinions or cross-model review without switching.",
-			"Prefer scoped models; only use scope='all' when the user asked.",
+			"Use models(action='list') to discover available scoped models when the target is uncertain.",
+			"Use models(action='switch', modelId=..., message=...) when subsequent turns should continue on another model.",
+			"Use models(action='consult', prompt=...) for a one-shot second opinion or review without changing the active model.",
+			"Prefer scoped models; use scope='all' only when the user asks or scoped results are insufficient.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "switch", "consult"] as const, {

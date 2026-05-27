@@ -19,12 +19,13 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			"queue_message: queue a user message in the current session.",
 			"reload: reload extensions and runtime after the current turn.",
 		].join(" "),
-		promptSnippet: "Session management: info, search, resume, new, name, queue_message, reload",
+		promptSnippet: "Manage pi runtime sessions",
 		promptGuidelines: [
-			"Use sessions(action='info') to check current model, tokens, and cwd.",
-			"Use sessions(action='search') to find past sessions, then sessions(action='resume') to switch.",
-			"Confirm with the user before resume or new, as current context will be lost.",
-			"Use sessions(action='queue_message') to queue another user message in the current session.",
+			"Use sessions(action='info') to check the current model, token usage, cwd, and session file.",
+			"Use sessions(action='search') to find past sessions, then sessions(action='resume', sessionFile=...) to switch.",
+			"Ask before resume or new unless the user explicitly requested it; they change the active session.",
+			"Use sessions(action='queue_message') to send a follow-up user message in the current session.",
+			"Pass message= to resume/new/reload to send a follow-up user message after the transition.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["info", "search", "resume", "new", "name", "queue_message", "reload"] as const, {
