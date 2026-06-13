@@ -7,8 +7,9 @@
  *   models    — model listing, switching, and consultation
  *   commands  — dispatch arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls
  *
- * Also registers a context event hook to inject a runtime status line
- * (model, context usage, tool-output share) after the last user message.
+ * Also registers a context event hook that injects a runtime status line
+ * only on significant state changes (model switch, context/tool threshold
+ * crossings), not every turn — preserving prompt cache across providers.
  *
  * Uses a private API hack to capture command-only closures from
  * ExtensionRunner.prototype.bindCommandContext, then executes
@@ -23,6 +24,16 @@ import { registerTreeRouter } from "./tree.js";
 import { registerModelsRouter } from "./model.js";
 import { registerCommandsRouter } from "./commands.js";
 
+// ── Event-driven status injection state ──
+let lastModel: string | null = null;
+let lastContextBucket: string | null = null;
+function contextBucket(pct: number): string | null {
+	if (pct >= 95) return "critical";
+	if (pct >= 85) return "very-high";
+	if (pct >= 70) return "high";
+	return null;
+}
+
 export default function (pi: ExtensionAPI) {
 	// Patch ExtensionRunner to auto-capture command context actions.
 	const patchOk = patchBindCommandContext();
@@ -32,9 +43,9 @@ export default function (pi: ExtensionAPI) {
 	registerModelsRouter(pi);
 	registerCommandsRouter(pi);
 
-	// ── Context event: inject runtime status after last user message ──
-	// Placed after the last user message so the request prefix stays identical
-	// across turns, preserving prefix cache hits.
+	// ── Context event: inject runtime status only on state changes ──
+	// Fires on: model switch (incl. first turn), context/tool threshold crossings.
+	// Skips injection on most turns to preserve prompt cache.
 	pi.on("context", async (event, ctx) => {
 		const messages = event.messages;
 		if (!messages || messages.length === 0) return;
@@ -42,46 +53,49 @@ export default function (pi: ExtensionAPI) {
 		const currentModel = ctx.model;
 		if (!currentModel) return;
 
+		const modelId = `${currentModel.provider}/${currentModel.id}`;
 		const usage = ctx.getContextUsage?.();
-		const parts: string[] = [`model=${currentModel.provider}/${currentModel.id}`];
-		if (usage && typeof usage.percent === "number") {
-			parts.push(`context=${Math.min(100, Math.round(usage.percent))}%`);
+		const ctxPct = (usage && typeof usage.percent === "number") ? Math.min(100, Math.round(usage.percent)) : 0;
+
+		// ── Determine what changed ──
+		const reasons: string[] = [];
+
+		if (modelId !== lastModel) {
+			reasons.push(`model=${modelId}`);
+			lastModel = modelId;
 		}
 
-		// Tool-output share — proxy for context noise density.
-		let totalChars = 0;
-		let toolChars = 0;
-		for (const m of messages as any[]) {
-			let mc = 0;
-			if (typeof m.content === "string") mc = m.content.length;
-			else if (Array.isArray(m.content)) {
-				for (const part of m.content) {
-					if (typeof part?.text === "string") mc += part.text.length;
-					else if (typeof part?.content === "string") mc += part.content.length;
-				}
-			}
-			totalChars += mc;
-			if (m.role === "toolResult") toolChars += mc;
+		const cb = contextBucket(ctxPct);
+		if (cb && cb !== lastContextBucket) {
+			reasons.push(`context=${ctxPct}% (${cb})`);
 		}
-		if (totalChars > 0) {
-			parts.push(`tool=${Math.round((toolChars / totalChars) * 100)}%`);
-		}
+		lastContextBucket = cb;
+
+		// Nothing changed — skip injection entirely.
+		if (reasons.length === 0) return;
 
 		const statusMsg = {
 			role: "custom",
 			customType: "pi-status",
-			content: `[pi-control] ${parts.join(" | ")}`,
+			content: `[pi-control] ${reasons.join(" | ")}`,
 			display: false,
 			timestamp: Date.now(),
 		} as any;
 
-		// Insert AFTER the last user message.
+		// Append to last user message content instead of inserting a new message,
+		// so no extra "ghost" user message enters history.
 		for (let i = messages.length - 1; i >= 0; i--) {
-			if ((messages[i] as any).role === "user") {
-				messages.splice(i + 1, 0, statusMsg);
+			const msg = messages[i] as any;
+			if (msg.role === "user") {
+				if (typeof msg.content === "string") {
+					msg.content += `\n\n${statusMsg.content}`;
+				} else if (Array.isArray(msg.content)) {
+					msg.content.push({ type: "text", text: `\n\n${statusMsg.content}` });
+				}
 				return { messages };
 			}
 		}
+		// Fallback: insert as separate message.
 		messages.push(statusMsg);
 		return { messages };
 	});
@@ -122,5 +136,7 @@ export default function (pi: ExtensionAPI) {
 			console.warn("[pi-control] session_shutdown fired while a transition was pending; dropping it.");
 		}
 		clearPending();
+		lastModel = null;
+		lastContextBucket = null;
 	});
 }
