@@ -17,14 +17,12 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 
 **Status line** (event-driven)
 
-Injected only on significant state changes — not every turn:
+Appended to the last user message on state changes:
 
-- **Model switch** (including session's first turn): `[pi-control] model=<provider/id>`
-- **Context threshold crossing** (70% / 85% / 95%): `[pi-control] context=<n>% (<level>)`
+- **Model switch** (including first turn): `[pi-control] model=<provider/id>`
+- **Context threshold crossing** (70 / 85 / 95%): `[pi-control] context=<n>% (<level>)`
 
-When injected, the status is appended to the last user message content rather than inserted as a separate message. This avoids creating a new cache breakpoint that would invalidate Anthropic/Claude prompt caching on every turn.
-
-For full runtime details (model, context%, tool output share), use `sessions(action='info')`.
+Full runtime details available via `sessions(action='info')`.
 
 ## Install
 
