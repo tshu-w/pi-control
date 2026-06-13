@@ -82,20 +82,13 @@ export default function (pi: ExtensionAPI) {
 			timestamp: Date.now(),
 		} as any;
 
-		// Append to last user message content instead of inserting a new message,
-		// so no extra "ghost" user message enters history.
+		// Insert after the last user message.
 		for (let i = messages.length - 1; i >= 0; i--) {
-			const msg = messages[i] as any;
-			if (msg.role === "user") {
-				if (typeof msg.content === "string") {
-					msg.content += `\n\n${statusMsg.content}`;
-				} else if (Array.isArray(msg.content)) {
-					msg.content.push({ type: "text", text: `\n\n${statusMsg.content}` });
-				}
+			if ((messages[i] as any).role === "user") {
+				messages.splice(i + 1, 0, statusMsg);
 				return { messages };
 			}
 		}
-		// Fallback: insert as separate message.
 		messages.push(statusMsg);
 		return { messages };
 	});
