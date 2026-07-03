@@ -6,6 +6,10 @@ export function getSessionsDir(): string {
 	return path.join(getAgentDir(), "sessions");
 }
 
+// Exclude pi-control's own tool results from searchable text, so searching
+// for a keyword does not echo previous sessions/tree/models/commands outputs.
+const PI_CONTROL_TOOL_NAMES = new Set(["sessions", "tree", "models", "commands"]);
+
 /**
  * Walk the sessions directory and return all .jsonl files sorted newest-first by mtime.
  */
@@ -151,6 +155,7 @@ export function getEntryText(entry: any): string {
 		case "message": {
 			const msg = entry.message;
 			if (!msg) return "";
+			if (msg.role === "toolResult" && PI_CONTROL_TOOL_NAMES.has(msg.toolName)) return "";
 			const content = msg.content;
 			if (typeof content === "string") return content;
 			if (Array.isArray(content)) {
