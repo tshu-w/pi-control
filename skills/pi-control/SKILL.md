@@ -72,6 +72,40 @@ Plan with one model, implement with another (or vice versa):
           message="Implement the plan above.")
 ```
 
+## Session Lifecycle
+
+The tools describe *what* each action does; these patterns cover *when* to combine them.
+
+### Resume with intent
+
+1. `sessions(search, keyword=..., scope="cwd")` — find the session; confirm with the user if multiple candidates match.
+2. `sessions(resume, sessionFile=..., message="...")` — always pass `message` so the resumed session starts with a directive instead of waking up idle.
+
+### Fork for experiments
+
+When trying a risky alternative without polluting the main line:
+
+1. `tree(list)` or `tree(search)` — find the user turn to branch from.
+2. `tree(fork, entryId=..., message="try approach B")` — the fork gets its own session; the original branch stays clean.
+
+### Cross-session handoff
+
+A handoff is a transition plus a payload. The receiving session has no memory of the current one, so the `message` must carry everything it needs:
+
+```
+sessions(new, message="Context: <state summary>. Task: <next step>. Constraints: <...>")
+```
+
+Same applies to `resume` — summarize what happened here before switching there.
+
+### Context self-regulation
+
+React to `[pi-control] context=NN%` status lines instead of running until the wall:
+
+- **70%** — finish the current scope; avoid opening new large files
+- **85%** — `tree(compact)` with `customInstructions`, or hand off to a new session
+- **95%** — stop; compact or hand off now, work done here may be lost
+
 ## Anti-Patterns
 
 | Don't | Do |
@@ -79,3 +113,5 @@ Plan with one model, implement with another (or vice versa):
 | Review every small change | Review non-trivial or risky changes |
 | Leave the session on the reviewer | End on the implementor |
 | Switch models without a message | Always pass `message=` to drive the next turn |
+| Resume/new/fork without a message | Pass `message=` so the target session starts with a directive |
+| Hand off without context | Put state summary + task + constraints in the handoff message |
