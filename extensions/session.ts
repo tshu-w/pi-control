@@ -153,7 +153,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: "A session transition is already scheduled. Use the transition's `message` parameter instead of queue_message." }], details: {} };
 					}
 					const deliverAs = params.deliverAs ?? "followUp";
-					pi.sendUserMessage(params.message, { deliverAs });
+					await pi.sendUserMessage(params.message, { deliverAs });
 					return {
 						content: [{ type: "text", text: `Message queued as ${deliverAs}.` }],
 						details: { deliverAs },
