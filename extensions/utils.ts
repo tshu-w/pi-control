@@ -130,7 +130,16 @@ export async function scanSessions(
 				const snippet = (start > 0 ? "..." : "") + text.slice(start, end).replace(/\n/g, " ") + (end < text.length ? "..." : "");
 				snippets.push(`[${role}] ${snippet}`);
 			}
-			if (snippets.length === 0) snippets = undefined;
+			if (snippets.length === 0) {
+				// Keyword matched in raw file but not in any extractable text.
+				// Check if it matches session metadata before including.
+				const metaHit =
+					(sessionName && sessionName.toLowerCase().includes(lowerKw)) ||
+					(header?.cwd && String(header.cwd).toLowerCase().includes(lowerKw)) ||
+					(firstUserMsg && firstUserMsg.toLowerCase().includes(lowerKw));
+				if (!metaHit) continue;
+				snippets = undefined;
+			}
 		}
 
 		results.push({
