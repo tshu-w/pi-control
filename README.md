@@ -44,6 +44,20 @@ The patch is idempotent and applied once on activation. If it fails (pi internal
 
 When pi adds first-class APIs, the hack goes away. Tracking upstream at [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
+## Testing
+
+```bash
+npm install && npm test
+```
+
+`tests/contract.test.mjs` pins the private-API assumptions above against the
+installed pi package — run it after every pi upgrade; it fails before
+resume/new/navigate/fork silently degrade at runtime. `tests/command-actions.test.mjs`
+covers the deferred-action state machine (single pending slot,
+consume-before-await, cancellation/error paths, follow-up delivery) with
+recording fakes in place of pi's closures. `tests/scan.test.mjs` covers
+session search filtering and own-output exclusion.
+
 ## License
 
 MIT.
