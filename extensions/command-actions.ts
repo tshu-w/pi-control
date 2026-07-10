@@ -4,9 +4,10 @@
  * pi's public API only exposes switchSession/newSession/navigateTree/fork/reload
  * on ExtensionCommandContext (command handlers), not on ExtensionContext (tools/events).
  * We patch ExtensionRunner.prototype.bindCommandContext to capture these closures
- * when the runtime binds them, then execute pending actions after agent_end + setTimeout(0).
+ * when the runtime binds them, then execute pending actions on agent_settled.
  *
- * This is the userland polyfill for upstream pi.runWhenIdle() (#2023).
+ * This is the userland polyfill for the session-transition APIs missing from
+ * ExtensionContext (upstream pi#2023).
  */
 
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";

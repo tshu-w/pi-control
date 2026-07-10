@@ -8,8 +8,8 @@
  *
  *   1. The five session-transition closures on ExtensionCommandContext
  *      (newSession / fork / switchSession / navigateTree / reload) are wrapped.
- *      A handler calling them schedules a deferred raw op (executed after
- *      agent_end + setTimeout(0), reusing the existing pi-control queue) and
+ *      A handler calling them schedules a deferred raw op (executed on
+ *      agent_settled, reusing the existing pi-control queue) and
  *      throws DeferredTransitionRequested to unwind the handler — so it cannot
  *      keep running under the false assumption that the session was replaced.
  *
@@ -286,7 +286,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						mediated = mediateCtx(realCtx, capture);
 						await cmd.handler(args, mediated.ctx);
 						// Defensive: handler may have caught DeferredTransitionRequested and
-						// resumed normally. Letting its queued transition fire on agent_end
+						// resumed normally. Letting its queued transition fire on agent_settled
 						// would surprise the model, so cancel only the rawOp scheduled by
 						// this command run (never another router's pending action).
 						if (mediated.clearOwnPendingRawOp()) {

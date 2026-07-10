@@ -13,8 +13,7 @@
  *
  * Uses a private API hack to capture command-only closures from
  * ExtensionRunner.prototype.bindCommandContext, then executes
- * pending session/navigation actions after agent_end + setTimeout(0).
- * Upstream equivalent: pi.runWhenIdle() (#2023).
+ * pending session/navigation actions on agent_settled.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -94,7 +93,10 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// ── Execute pending actions after agent fully settles ──
-	pi.on("agent_end", async (_event, ctx) => {
+	// agent_settled (pi >= 0.80.4) fires only when no auto-retry, compaction
+	// retry, or queued follow-up remains. setTimeout(0) escapes the emit
+	// stack so session replacement never runs inside the settled emit.
+	pi.on("agent_settled", async (_event, ctx) => {
 		if (!hasPending()) return;
 		const notify = ctx.hasUI
 			? (msg: string, level: "info" | "warning" | "error") => ctx.ui.notify(msg, level)

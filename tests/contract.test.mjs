@@ -3,6 +3,9 @@
 // before resume/new/navigate/fork silently degrade at runtime.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { patchBindCommandContext, isArmed, getOps, getRunner } from "../extensions/command-actions.ts";
 
@@ -19,6 +22,14 @@ test("ExtensionRunner still exposes the patched/used private methods", () => {
 	for (const method of ["bindCommandContext", "getRegisteredCommands", "getCommand", "createCommandContext"]) {
 		assert.equal(typeof ExtensionRunner.prototype[method], "function", `ExtensionRunner.prototype.${method} missing — pi private API changed`);
 	}
+});
+
+test("pi still exposes the agent_settled extension event (pi >= 0.80.4)", () => {
+	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+	const types = readFileSync(path.join(path.dirname(entry), "core", "extensions", "types.d.ts"), "utf8");
+	// Deferred transitions run on agent_settled; if pi renames or drops the
+	// event, they would silently never fire.
+	assert.match(types, /"agent_settled"/, "agent_settled missing from pi extension types — deferred transitions would never fire");
 });
 
 test("patch captures ops and runner when pi binds the command context", () => {
