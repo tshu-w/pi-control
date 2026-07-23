@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
+import { renderToolCall } from "./render-call.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
 
@@ -67,6 +68,9 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			customInstructions: Type.Optional(Type.String({ description: "Custom instructions for context summarization. For navigate/compact." })),
 			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For navigate/fork/compact. Omit to leave the agent idle." })),
 		}),
+		renderCall(args, theme) {
+			return renderToolCall("tree", args, theme);
+		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
 				// ── list ─────────────────────────────────────────────

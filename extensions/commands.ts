@@ -39,6 +39,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
+import { renderToolCall } from "./render-call.js";
 
 class DeferredTransitionRequested extends Error {
 	constructor(public op: string, public schedulingError?: string) {
@@ -208,6 +209,9 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			args: Type.Optional(Type.String({ description: "Argument string passed verbatim to the handler. For run. Default: empty." })),
 			filter: Type.Optional(Type.String({ description: "Substring filter on name or description. For list." })),
 		}),
+		renderCall(args, theme) {
+			return renderToolCall("commands", args, theme);
+		},
 		async execute(_id, params, _signal, _onUpdate, _ctx) {
 			const runner = getRunner();
 			if (!runner) {

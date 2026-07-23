@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getSessionsDir, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
+import { renderToolCall } from "./render-call.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
 	pi.registerTool({
@@ -45,6 +46,9 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			message: Type.Optional(Type.String({ description: "Message content delivered as a user message. For queue_message: the queued body. For resume/new/reload: a next-turn directive." })),
 			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: '"followUp" (default) or "steer". For queue_message.' })),
 		}),
+		renderCall(args, theme) {
+			return renderToolCall("sessions", args, theme);
+		},
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			switch (params.action) {
 				// ── info ─────────────────────────────────────────────

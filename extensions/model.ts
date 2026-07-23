@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getEnabledModels } from "./utils.js";
+import { renderToolCall } from "./render-call.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -112,6 +113,9 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			prompt: Type.Optional(Type.String({ description: "Prompt to send. For consult." })),
 			systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt. For consult." })),
 		}),
+		renderCall(args, theme) {
+			return renderToolCall("models", args, theme);
+		},
 		async execute(_id, params, signal, onUpdate, ctx) {
 			switch (params.action) {
 				// ── list ─────────────────────────────────────────────
