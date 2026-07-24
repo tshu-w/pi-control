@@ -29,8 +29,10 @@ test("router calls render every argument in function-call form", () => {
 			bold: (text) => `<b>${text}</b>`,
 			fg: (color, text) => { styles.push([color, text]); return text; },
 		};
-		const component = tools.get(name).renderCall(args, theme, { expanded: false });
-		assert.deepEqual(component.render(1000).map((line) => line.trimEnd()), [expected, ""]);
+		const pending = tools.get(name).renderCall(args, theme, { expanded: false, isPartial: true });
+		assert.deepEqual(pending.render(1000).map((line) => line.trimEnd()), [expected]);
+		const completed = tools.get(name).renderCall(args, theme, { expanded: false, isPartial: false });
+		assert.deepEqual(completed.render(1000).map((line) => line.trimEnd()), [expected, ""]);
 		assert.equal(styles[0][0], "toolTitle");
 		assert.ok(styles.filter(([color]) => color === "text").length > Object.keys(args).length);
 		assert.equal(styles.some(([color]) => color === "muted"), false);

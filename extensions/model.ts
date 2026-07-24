@@ -113,8 +113,8 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			prompt: Type.Optional(Type.String({ description: "Prompt to send. For consult." })),
 			systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt. For consult." })),
 		}),
-		renderCall(args, theme) {
-			return renderToolCall("models", args, theme);
+		renderCall(args, theme, context) {
+			return renderToolCall("models", args, theme, !context.isPartial);
 		},
 		async execute(_id, params, signal, onUpdate, ctx) {
 			switch (params.action) {

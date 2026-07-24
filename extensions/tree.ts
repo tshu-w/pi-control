@@ -68,8 +68,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			customInstructions: Type.Optional(Type.String({ description: "Custom instructions for context summarization. For navigate/compact." })),
 			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For navigate/fork/compact. Omit to leave the agent idle." })),
 		}),
-		renderCall(args, theme) {
-			return renderToolCall("tree", args, theme);
+		renderCall(args, theme, context) {
+			return renderToolCall("tree", args, theme, !context.isPartial);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {

@@ -209,8 +209,8 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			args: Type.Optional(Type.String({ description: "Argument string passed verbatim to the handler. For run. Default: empty." })),
 			filter: Type.Optional(Type.String({ description: "Substring filter on name or description. For list." })),
 		}),
-		renderCall(args, theme) {
-			return renderToolCall("commands", args, theme);
+		renderCall(args, theme, context) {
+			return renderToolCall("commands", args, theme, !context.isPartial);
 		},
 		async execute(_id, params, _signal, _onUpdate, _ctx) {
 			const runner = getRunner();

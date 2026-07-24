@@ -46,8 +46,8 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			message: Type.Optional(Type.String({ description: "Message content delivered as a user message. For queue_message: the queued body. For resume/new/reload: a next-turn directive." })),
 			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: '"followUp" (default) or "steer". For queue_message.' })),
 		}),
-		renderCall(args, theme) {
-			return renderToolCall("sessions", args, theme);
+		renderCall(args, theme, context) {
+			return renderToolCall("sessions", args, theme, !context.isPartial);
 		},
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			switch (params.action) {
