@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { scanSessions } from "../extensions/utils.ts";
+import { clampLimit, scanSessions } from "../extensions/utils.ts";
 
 const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-control-test-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -76,6 +76,12 @@ test("limit stops the scan early, newest first", async () => {
 	const results = await scanSessions(undefined, 2, undefined, { scope: "all" });
 	assert.equal(results.length, 2);
 	assert.equal(results[0].name, "renamed-late", "newest session must come first");
+});
+
+test("router limits reject unbounded page sizes", () => {
+	assert.equal(clampLimit(1_000_000, 10, 100), 100);
+	assert.equal(clampLimit(-10, 10, 100), 0);
+	assert.equal(clampLimit(undefined, 10, 100), 10);
 });
 
 test.after(() => fs.rmSync(agentDir, { recursive: true, force: true }));

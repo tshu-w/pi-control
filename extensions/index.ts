@@ -24,8 +24,6 @@ import { registerModelsRouter } from "./model.js";
 import { registerCommandsRouter } from "./commands.js";
 
 // ── Event-driven status injection state ──
-let lastModel: string | null = null;
-let lastContextBucket: string | null = null;
 function contextBucket(pct: number): string | null {
 	if (pct >= 95) return "critical";
 	if (pct >= 85) return "very-high";
@@ -34,6 +32,9 @@ function contextBucket(pct: number): string | null {
 }
 
 export default function (pi: ExtensionAPI) {
+	let lastModel: string | null = null;
+	let lastContextBucket: string | null = null;
+
 	// Patch ExtensionRunner to auto-capture command context actions.
 	const patchOk = patchBindCommandContext();
 
@@ -96,7 +97,7 @@ export default function (pi: ExtensionAPI) {
 	// agent_settled (pi >= 0.80.4) fires only when no auto-retry, compaction
 	// retry, or queued follow-up remains.
 	pi.on("agent_settled", async (_event, ctx) => {
-		if (!hasPending()) return;
+		if (!hasPending(ctx)) return;
 		const notify = ctx.hasUI
 			? (msg: string, level: "info" | "warning" | "error") => ctx.ui.notify(msg, level)
 			: undefined;
@@ -104,7 +105,7 @@ export default function (pi: ExtensionAPI) {
 		// core publishes settled to external listeners and resolves idle only
 		// after extension handlers return, so an external prompt racing the
 		// settled event already sees the new model.
-		if (await runPendingDeferredInline(notify)) return;
+		if (await runPendingDeferredInline(ctx, notify)) return;
 		const runtime = {
 			sendFollowUp: async (msg: string) => { await pi.sendUserMessage(msg, { deliverAs: "followUp" }); },
 		};
@@ -114,7 +115,7 @@ export default function (pi: ExtensionAPI) {
 		// that raced the public settled event finishes instead of being torn
 		// down mid-turn by the transition.
 		setTimeout(() => {
-			runPending(notify, runtime).catch((e) => {
+			runPending(ctx, notify, runtime).catch((e) => {
 				if (notify) notify(`pi-control runPending error: ${e}`, "error");
 				else console.error("[pi-control] runPending error:", e);
 			});
@@ -128,7 +129,7 @@ export default function (pi: ExtensionAPI) {
 		if (!patchOk) {
 			warnedOnce = true;
 			if (ctx.hasUI) ctx.ui.notify("pi-control: failed to patch ExtensionRunner — resume/new/navigate/fork will fall back to built-in commands", "warning");
-		} else if (!isArmed()) {
+		} else if (!isArmed(ctx)) {
 			warnedOnce = true;
 			if (ctx.hasUI) ctx.ui.notify("pi-control: command context not captured — resume/new/navigate/fork will fall back to built-in commands", "warning");
 		}
@@ -138,11 +139,11 @@ export default function (pi: ExtensionAPI) {
 	// actions are stale: a transition in flight fires session_shutdown itself
 	// (core emits it before switchSession/reload resolve) and is released by
 	// runPending's finally, not here.
-	pi.on("session_shutdown", async () => {
-		if (hasQueuedAction()) {
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (hasQueuedAction(ctx)) {
 			console.warn("[pi-control] session_shutdown fired while a transition was pending; dropping it.");
 		}
-		clearPending();
+		clearPending(ctx);
 		lastModel = null;
 		lastContextBucket = null;
 	});

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { getSessionsDir, scanSessions } from "./utils.js";
+import { clampLimit, getSessionsDir, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
 import { withToolOutputContract } from "./tool-output.js";
@@ -35,7 +35,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			}),
 			// search params
 			keyword: Type.Optional(Type.String({ description: "Search keyword (case-insensitive). For search." })),
-			limit: Type.Optional(Type.Number({ description: "Max results. Default: 10. For search." })),
+			limit: Type.Optional(Type.Number({ description: "Max results. Default: 10, maximum: 100. For search.", maximum: 100 })),
 			scope: Type.Optional(StringEnum(["cwd", "all"] as const, { description: '"cwd" (default) limits search to sessions in the current working directory; "all" scans every session. For search.' })),
 			// resume params
 			sessionFile: Type.Optional(Type.String({ description: "Full path to session .jsonl file. For resume." })),
@@ -79,7 +79,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 
 				// ── search ──────────────────────────────────────────
 				case "search": {
-					const limit = Math.max(0, Math.trunc(params.limit ?? 10));
+					const limit = clampLimit(params.limit, 10, 100);
 					const scope = (params.scope ?? "cwd") as "cwd" | "all";
 					const results = await scanSessions(params.keyword, limit, signal, { scope, cwd: ctx.cwd });
 
@@ -120,7 +120,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					if (!fs.existsSync(params.sessionFile)) {
 						return { content: [{ type: "text", text: `Session file not found: ${params.sessionFile}` }], details: {} };
 					}
-					return scheduleAction({
+					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/resume` instead.",
 						action: { kind: "resume", file: params.sessionFile!, message: params.message },
 						successText: `Scheduled session switch to: ${params.sessionFile}${params.message ? " (with followUp message)" : ""}`,
@@ -132,7 +132,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 				case "new": {
 					const currentFile = ctx.sessionManager.getSessionFile();
 					const parentSession = (params.linkParent ?? true) ? currentFile ?? undefined : undefined;
-					return scheduleAction({
+					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/new` instead.",
 						action: { kind: "new", parentSession, message: params.message },
 						successText: `Scheduled new session creation${params.message ? " (with followUp message)" : ""}.`,
@@ -157,7 +157,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					if (!params.message) {
 						return { content: [{ type: "text", text: "`message` is required for queue_message." }], details: {} };
 					}
-					if (hasPending()) {
+					if (hasPending(ctx)) {
 						return { content: [{ type: "text", text: "A session transition is already scheduled. Use the transition's `message` parameter instead of queue_message." }], details: {} };
 					}
 					const deliverAs = params.deliverAs ?? "followUp";
@@ -173,7 +173,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 
 				// ── reload ───────────────────────────────────────────
 				case "reload": {
-					return scheduleAction({
+					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/reload` instead.",
 						action: { kind: "reload", message: params.message },
 						successText: `Scheduled runtime reload${params.message ? " (with followUp message)" : ""}.`,

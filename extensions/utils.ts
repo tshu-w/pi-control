@@ -6,6 +6,11 @@ export function getSessionsDir(): string {
 	return path.join(getAgentDir(), "sessions");
 }
 
+export function clampLimit(value: unknown, fallback: number, maximum: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+	return Math.max(0, Math.min(Math.trunc(value), maximum));
+}
+
 // Exclude pi-control's own tool results from searchable text, so searching
 // for a keyword does not echo previous sessions/tree/models/commands outputs.
 const PI_CONTROL_TOOL_NAMES = new Set(["sessions", "tree", "models", "commands"]);

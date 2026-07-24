@@ -1,7 +1,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { formatEntryPreview, getEntryText } from "./utils.js";
+import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 import { renderToolCall } from "./render-call.js";
@@ -53,8 +53,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			}),
 			// list params
 			scope: Type.Optional(StringEnum(["branch", "all"] as const, { description: '"branch" (default) or "all". For list.' })),
-			limit: Type.Optional(Type.Number({ description: 'Max items. For list: scope="branch" = entries, scope="all" = fork points. Default: 20. For search: default 10.' })),
-			offset: Type.Optional(Type.Number({ description: 'Skip N items for list pagination. For scope="branch": entries from the end. For scope="all": fork points after the current branch summary. Default: 0.' })),
+			limit: Type.Optional(Type.Number({ description: 'Max items. Default: 20 for list/labels and 10 for search; maximum: 200 for list/labels and 100 for search.', maximum: 200 })),
+			offset: Type.Optional(Type.Number({ description: 'Skip N items for list/labels pagination. For scope="branch": entries from the end. For scope="all": fork points after the current branch summary. Default: 0.' })),
 			filter: Type.Optional(StringEnum(["default", "user-only", "no-tools", "labeled-only", "all"] as const, {
 				description: 'Filter mode for `scope="branch"`. "default" hides settings entries, "user-only" shows only user messages, "no-tools" hides tool results, "labeled-only" shows labeled entries, "all" shows everything. Default: "default". For list.',
 			})),
@@ -77,7 +77,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				// ── list ─────────────────────────────────────────────
 				case "list": {
 					const scope = params.scope ?? "branch";
-					const limit = Math.max(0, Math.trunc(params.limit ?? 20));
+					const limit = clampLimit(params.limit, 20, 200);
 					const offset = Math.max(0, Math.trunc(params.offset ?? 0));
 
 					if (scope === "all") {
@@ -185,7 +185,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: "`keyword` is required for search." }], details: {} };
 					}
 					const kw = params.keyword.toLowerCase();
-					const limit = Math.max(0, Math.trunc(params.limit ?? 10));
+					const limit = clampLimit(params.limit, 10, 100);
 
 					// Search entire tree, not just current branch
 					const tree = ctx.sessionManager.getTree();
@@ -235,6 +235,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 				// ── labels ──────────────────────────────────────────
 				case "labels": {
+					const limit = clampLimit(params.limit, 20, 200);
+					const offset = Math.max(0, Math.trunc(params.offset ?? 0));
 					const entries = ctx.sessionManager.getEntries();
 					const branchIds = new Set(ctx.sessionManager.getBranch().map((e: any) => e.id));
 					const labeled: Array<{ id: string; label: string; preview: string; onBranch: boolean }> = [];
@@ -254,12 +256,19 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						};
 					}
 
-					const lines = labeled.map(l =>
+					const page = labeled.slice(offset, offset + limit);
+					const lines = page.map(l =>
 						`- "${l.label}" → ${l.preview}${l.onBranch ? "" : "  [off-branch]"}`
 					);
 					return {
-						content: [{ type: "text", text: `labels (${labeled.length})\n${lines.join("\n")}` }],
-						details: { labels: labeled.map(({ id, label, onBranch }) => ({ id, label, onBranch })) },
+						content: [{ type: "text", text: `labels (${page.length}/${labeled.length}, offset ${offset})\n${lines.join("\n")}` }],
+						details: {
+							labels: page.map(({ id, label, onBranch }) => ({ id, label, onBranch })),
+							total: labeled.length,
+							shown: page.length,
+							offset,
+							limit,
+						},
 					};
 				}
 
@@ -315,7 +324,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					if (navEntry.id === ctx.sessionManager.getLeafId()) {
 						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
 					}
-					return scheduleAction({
+					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/tree` instead.",
 						action: {
 							kind: "nav",
@@ -347,7 +356,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 							details: {},
 						};
 					}
-					return scheduleAction({
+					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/fork` instead.",
 						action: { kind: "fork", id: target.id, message: params.message },
 						successText: `Scheduled fork from entry: ${target.id}${params.message ? " (with followUp message)" : ""}`,

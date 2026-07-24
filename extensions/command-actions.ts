@@ -64,16 +64,9 @@ export interface CommandOps {
 	waitForIdle?: () => Promise<void>;
 }
 
-// ── State ───────────────────────────────────────────────────
+// ── Session-scoped state ────────────────────────────────────
 
-// Process-wide singleton. Pi's /reload clears the extension module cache and
-// re-executes this module as a fresh instance; module-local state would leave
-// the prototype patch re-wrapping bindCommandContext once per reload (a
-// growing wrapper chain pinning every old module instance) and would split
-// ops/pending/runner between the instance that patched and the instance the
-// routers now call. Symbol.for + globalThis gives every instance the same
-// state and makes the patch idempotent across reloads.
-interface SharedState {
+interface CommandState {
 	ops: CommandOps | null;
 	pending: PendingAction | null;
 	/** Set while runPending / runPendingDeferredInline executes an action.
@@ -81,40 +74,56 @@ interface SharedState {
 	 *  the first waits for idle or is mid-teardown. */
 	inFlight: { kind: string; label: string } | null;
 	runner: any;
-	patched: boolean;
 }
 
-const STATE_KEY = Symbol.for("pi-control:command-actions-state");
-const _state: SharedState = ((globalThis as any)[STATE_KEY] ??= {
-	ops: null,
-	pending: null,
-	inFlight: null,
-	runner: null,
+interface CommandRegistry {
+	patched: boolean;
+	states: WeakMap<object, CommandState>;
+}
+
+const REGISTRY_KEY = Symbol.for("pi-control:command-actions");
+const registry = ((globalThis as any)[REGISTRY_KEY] ??= {
 	patched: false,
-});
+	states: new WeakMap<object, CommandState>(),
+}) as CommandRegistry;
+
+export type CommandOwner = object;
+
+function ownerKey(owner: CommandOwner): object {
+	const sessionManager = (owner as any)?.sessionManager;
+	return sessionManager && typeof sessionManager === "object" ? sessionManager : owner;
+}
+
+function stateFor(owner: CommandOwner, create = false): CommandState | undefined {
+	const key = ownerKey(owner);
+	let state = registry.states.get(key);
+	if (!state && create) {
+		state = { ops: null, pending: null, inFlight: null, runner: null };
+		registry.states.set(key, state);
+	}
+	return state;
+}
 
 // ── Accessors ───────────────────────────────────────────────
 
-export function isArmed(): boolean { return _state.ops !== null; }
-/** True while the single slot is occupied — by a scheduled action or by one
- *  currently executing (waiting for idle / mid-transition). Both must block
- *  new scheduling: a second transition racing an in-flight one would tear
- *  down the session underneath it. */
-export function hasPending(): boolean { return _state.pending !== null || _state.inFlight !== null; }
-/** True only when an action is scheduled but not yet claimed by runPending.
- *  session_shutdown cleanup uses this: an in-flight transition legitimately
- *  triggers session_shutdown itself (core emits it before switchSession /
- *  reload resolve) and must not be reported as a stale pending action. */
-export function hasQueuedAction(): boolean { return _state.pending !== null; }
-function busyKind(): string | undefined {
-	return _state.pending?.kind ?? (_state.inFlight ? `in-flight ${_state.inFlight.kind}` : undefined);
+export function isArmed(owner: CommandOwner): boolean { return stateFor(owner)?.ops != null; }
+/** True while the session's single slot is occupied — by a scheduled action or
+ *  one currently executing (waiting for idle / mid-transition). */
+export function hasPending(owner: CommandOwner): boolean {
+	const state = stateFor(owner);
+	return state?.pending != null || state?.inFlight != null;
 }
-/** The ExtensionRunner instance, captured opportunistically inside bindCommandContext.
- *  Used by the `commands` router to enumerate/run third-party slash commands. */
-export function getRunner(): any { return _state.runner; }
+/** True only when an action is scheduled but not yet claimed by runPending. */
+export function hasQueuedAction(owner: CommandOwner): boolean { return stateFor(owner)?.pending != null; }
+function busyKind(state: CommandState): string | undefined {
+	return state.pending?.kind ?? (state.inFlight ? `in-flight ${state.inFlight.kind}` : undefined);
+}
+/** The ExtensionRunner instance captured for this session. */
+export function getRunner(owner: CommandOwner): any { return stateFor(owner)?.runner ?? null; }
 
-export function clearPending(): void {
-	_state.pending = null;
+export function clearPending(owner: CommandOwner): void {
+	const state = stateFor(owner);
+	if (state) state.pending = null;
 }
 
 /**
@@ -134,20 +143,21 @@ export interface ScheduleParams {
 	details?: Record<string, any>;
 }
 
-export function scheduleAction(params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
-	if (!isArmed()) {
+export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
+	const state = stateFor(owner);
+	if (!state?.ops) {
 		return {
 			content: [{ type: "text", text: `Command context not captured. ${params.fallbackHint}` }],
 			details: {},
 		};
 	}
-	if (hasPending()) {
+	if (state.pending || state.inFlight) {
 		return {
-			content: [{ type: "text", text: `Another pending action (${busyKind()}) is already scheduled. Wait for the current turn to finish.` }],
+			content: [{ type: "text", text: `Another pending action (${busyKind(state)}) is already scheduled. Wait for the current turn to finish.` }],
 			details: {},
 		};
 	}
-	_state.pending = params.action;
+	state.pending = params.action;
 	return {
 		content: [{ type: "text", text: params.successText }],
 		details: params.details ?? {},
@@ -157,52 +167,54 @@ export function scheduleAction(params: ScheduleParams): { content: Array<{ type:
 /** Schedule public-API work for agent_settled. Unlike scheduleAction this
  *  needs no captured command context. A pending "deferred" is replaced
  *  (last wins); any other pending kind rejects the request. */
-export function scheduleDeferred(label: string, exec: () => Promise<void>): { ok: true } | { ok: false; reason: string } {
-	if (_state.inFlight) {
-		return { ok: false, reason: `another action (in-flight ${_state.inFlight.kind}) is already executing` };
+export function scheduleDeferred(owner: CommandOwner, label: string, exec: () => Promise<void>): { ok: true } | { ok: false; reason: string } {
+	const state = stateFor(owner, true)!;
+	if (state.inFlight) {
+		return { ok: false, reason: `another action (in-flight ${state.inFlight.kind}) is already executing` };
 	}
-	if (_state.pending && _state.pending.kind !== "deferred") {
-		return { ok: false, reason: `another pending action (${_state.pending.kind}) is already queued` };
+	if (state.pending && state.pending.kind !== "deferred") {
+		return { ok: false, reason: `another pending action (${state.pending.kind}) is already queued` };
 	}
-	_state.pending = { kind: "deferred", label, exec };
+	state.pending = { kind: "deferred", label, exec };
 	return { ok: true };
 }
 
 /** Lower-level helper for the commands router: schedule a raw op without the
  *  scheduleAction success-text plumbing. Returns the reason if not armed or busy. */
-export function scheduleRawOp(label: string, exec: () => Promise<{ cancelled?: boolean } | void>): { ok: true; token: symbol } | { ok: false; reason: string } {
-	if (!isArmed()) return { ok: false, reason: "command context not captured (pi-control patch inactive)" };
-	if (hasPending()) return { ok: false, reason: `another pending action (${busyKind()}) is already queued` };
+export function scheduleRawOp(owner: CommandOwner, label: string, exec: () => Promise<{ cancelled?: boolean } | void>): { ok: true; token: symbol } | { ok: false; reason: string } {
+	const state = stateFor(owner);
+	if (!state?.ops) return { ok: false, reason: "command context not captured (pi-control patch inactive)" };
+	if (state.pending || state.inFlight) return { ok: false, reason: `another pending action (${busyKind(state)}) is already queued` };
 	const token = Symbol(label);
-	_state.pending = { kind: "rawOp", token, label, exec };
+	state.pending = { kind: "rawOp", token, label, exec };
 	return { ok: true, token };
 }
 
-export function isPendingRawOp(token: symbol): boolean {
-	return _state.pending?.kind === "rawOp" && _state.pending.token === token;
+export function isPendingRawOp(owner: CommandOwner, token: symbol): boolean {
+	const pending = stateFor(owner)?.pending;
+	return pending?.kind === "rawOp" && pending.token === token;
 }
 
-export function clearPendingRawOp(token: symbol): boolean {
-	if (!isPendingRawOp(token)) return false;
-	clearPending();
+export function clearPendingRawOp(owner: CommandOwner, token: symbol): boolean {
+	if (!isPendingRawOp(owner, token)) return false;
+	clearPending(owner);
 	return true;
 }
 
-/** Access to the captured ops for the commands router. Prefer scheduleRawOp
- *  in normal flows; this exists for the rare case where a handler needs to
- *  invoke an op synchronously with bespoke wiring. */
-export function getOps(): CommandOps | null { return _state.ops; }
+/** Access to the captured ops for one session. */
+export function getOps(owner: CommandOwner): CommandOps | null { return stateFor(owner)?.ops ?? null; }
 
 // ── Patch ───────────────────────────────────────────────────
 
 export function patchBindCommandContext(): boolean {
-	if (_state.patched) return true;
+	if (registry.patched) return true;
 	try {
 		const orig = ExtensionRunner.prototype.bindCommandContext;
 		if (typeof orig !== "function") return false;
 
 		ExtensionRunner.prototype.bindCommandContext = function (actions: any) {
-			_state.ops = actions ? {
+			const state = stateFor(this, true)!;
+			state.ops = actions ? {
 				switchSession: actions.switchSession,
 				newSession: actions.newSession,
 				navigateTree: actions.navigateTree,
@@ -212,11 +224,11 @@ export function patchBindCommandContext(): boolean {
 			} : null;
 			// Capture runner instance so the commands router can call
 			// getRegisteredCommands() / createCommandContext() without a separate hook.
-			_state.runner = this;
+			state.runner = this;
 			return orig.call(this, actions);
 		};
 
-		_state.patched = true;
+		registry.patched = true;
 		return true;
 	} catch {
 		return false;
@@ -232,12 +244,14 @@ export function patchBindCommandContext(): boolean {
  *  Session-transition kinds are left pending for the timer path (they must
  *  escape the emit stack). Returns true when a deferred action was consumed. */
 export async function runPendingDeferredInline(
+	owner: CommandOwner,
 	notify?: (msg: string, level: "info" | "warning" | "error") => void,
 ): Promise<boolean> {
-	if (_state.pending?.kind !== "deferred") return false;
-	const action = _state.pending;
-	_state.pending = null;
-	_state.inFlight = { kind: action.kind, label: action.label };
+	const state = stateFor(owner);
+	if (state?.pending?.kind !== "deferred") return false;
+	const action = state.pending;
+	state.pending = null;
+	state.inFlight = { kind: action.kind, label: action.label };
 	try {
 		await action.exec();
 	} catch (e) {
@@ -245,31 +259,32 @@ export async function runPendingDeferredInline(
 		if (notify) notify(message, "error");
 		else console.error(`[pi-control] ${message}`);
 	} finally {
-		_state.inFlight = null;
+		state.inFlight = null;
 	}
 	return true;
 }
 
 export async function runPending(
+	owner: CommandOwner,
 	notify?: (msg: string, level: "info" | "warning" | "error") => void,
 	runtime?: RuntimeContext,
 ): Promise<void> {
-	// Claim the action into inFlight: the single slot stays occupied for the
-	// whole execution (idle wait included), so a turn racing the settled event
-	// cannot schedule a second transition that would run concurrently with
-	// this one. Released in the finally below — also on cancellation/error.
-	const action = _state.pending;
-	_state.pending = null;
-	if (!action) return;
-	_state.inFlight = { kind: action.kind, label: "label" in action && action.label ? action.label : action.kind };
+	// Claim the action into inFlight: the session's single slot stays occupied
+	// for the whole execution (idle wait included).
+	const state = stateFor(owner);
+	const action = state?.pending;
+	if (!state || !action) return;
+	state.pending = null;
+	state.inFlight = { kind: action.kind, label: "label" in action && action.label ? action.label : action.kind };
 	try {
-		await dispatchPending(action, notify, runtime);
+		await dispatchPending(state, action, notify, runtime);
 	} finally {
-		_state.inFlight = null;
+		state.inFlight = null;
 	}
 }
 
 async function dispatchPending(
+	state: CommandState,
 	action: PendingAction,
 	notify?: (msg: string, level: "info" | "warning" | "error") => void,
 	runtime?: RuntimeContext,
@@ -296,7 +311,7 @@ async function dispatchPending(
 		} catch (e) { reportError(`Deferred ${action.label} failed`, e); }
 		return;
 	}
-	const ops = _state.ops;
+	const ops = state.ops;
 	if (!ops) return;
 
 	// A prompt may have raced the public settled event into the settled→timer
@@ -375,7 +390,7 @@ async function dispatchPending(
 					// stale pre-reload pi closure. createCommandContext() intentionally
 					// does not expose sendUserMessage except for replaced-session callbacks.
 					try {
-						const sendUserMessage = _state.runner?.runtime?.sendUserMessage;
+						const sendUserMessage = state.runner?.runtime?.sendUserMessage;
 						if (typeof sendUserMessage !== "function") throw new Error("fresh runtime has no sendUserMessage");
 						await Promise.resolve(sendUserMessage(action.message, { deliverAs: "followUp" }));
 					} catch (e) {

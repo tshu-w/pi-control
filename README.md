@@ -24,7 +24,7 @@ Appended to the last user message on state changes:
 - **Model switch** (including first turn): `[pi-control] model=<provider/id>`
 - **Context threshold crossing** (70 / 85 / 95%): `[pi-control] context=<n>% (<level>)`
 
-Full runtime details available via `sessions(action='info')`.
+Full runtime details available via `sessions(action='info')`. Runtime bindings, pending transitions, and model-status tracking are isolated per Pi session. Router list/search actions enforce page caps, and third-party command notifications and status updates are bounded before rendering.
 
 ## Install
 
@@ -42,7 +42,7 @@ The full private-API surface, for upgrade auditing:
 - `runner.getRegisteredCommands()` / `runner.getCommand()` / `runner.createCommandContext()` — used by the `commands` router to enumerate and invoke third-party slash commands
 - `runner.runtime.sendUserMessage` — used to deliver the follow-up message after a `reload` (the pre-reload extension closure would be stale)
 
-The patch and its captured state live in a process-wide slot (`Symbol.for` on `globalThis`), so pi's `/reload` — which re-executes extension modules as fresh instances — neither re-wraps the prototype nor splits state between module instances. If the patch fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.80.x.
+Captured command state lives in a process-wide registry keyed by session manager, so one Pi session cannot consume another session's pending transition or runner bindings. The patch is idempotent across `/reload`, which re-executes extension modules as fresh instances. If the patch fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.82.0.
 
 Timing semantics: a model switch is applied inside the `agent_settled` extension emit, before pi publishes settled to SDK/RPC/UI listeners — an external prompt racing the settled event already runs on the new model. Session transitions cannot run inside that emit (they tear down the runner), so they run just after; before executing, pi-control awaits `waitForIdle()` so a prompt that raced into that window finishes instead of being torn down mid-turn. A small window between the idle check and the transition's first step remains — closing it fully needs an upstream pre-publication seam. Follow-up delivery after `resume` / `new` / `fork` is awaited via the replaced-session context; `queue_message`, `navigate`, `compact`, `reload`, and model-handoff messages go through pi's fire-and-forget `sendUserMessage` (returns `void`), so those tools report submission, not confirmed enqueueing, and delivery failures surface as extension errors.
 
@@ -58,10 +58,12 @@ npm install && npm test
 installed pi package — run it after every pi upgrade; it fails before
 resume/new/navigate/fork silently degrade at runtime. `tests/command-actions.test.mjs`
 covers the deferred-action state machine (single pending slot,
-consume-before-await, cancellation/error paths, follow-up delivery) with
-recording fakes in place of pi's closures. `tests/scan.test.mjs` covers
-session search filtering and own-output exclusion. `tests/output-contract.test.mjs`
-covers final output bounds, full-output preservation, error handling, and lean details.
+consume-before-await, cancellation/error paths, follow-up delivery, and
+cross-session isolation) with recording fakes in place of pi's closures.
+`tests/commands.test.mjs` covers bounded third-party command capture.
+`tests/scan.test.mjs` covers session search filtering, page caps, and own-output
+exclusion. `tests/output-contract.test.mjs` covers final output bounds,
+full-output preservation, error handling, and lean details.
 
 ## License
 

@@ -54,6 +54,8 @@ class InteractiveUIUnavailable extends Error {
 	}
 }
 
+const MAX_CAPTURE_ITEMS = 100;
+
 interface Capture {
 	notifications: Array<{ level: "info" | "warning" | "error"; message: string }>;
 	statusUpdates: Array<{ key: string; text: string | undefined }>;
@@ -74,7 +76,7 @@ interface MediatedContext {
  * any property we did not override (cwd, sessionManager, exec, etc.).
  */
 function mediateCtx(ctx: any, capture: Capture): MediatedContext {
-	const ops = getOps();
+	const ops = getOps(ctx);
 	const hasUI: boolean = !!ctx?.hasUI;
 	let rawOpToken: symbol | null = null;
 
@@ -84,7 +86,7 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 		if (!ops) {
 			throw new DeferredTransitionRequested(op, "command ops unavailable");
 		}
-		const result = scheduleRawOp(op, runner);
+		const result = scheduleRawOp(ctx, op, runner);
 		if (!result.ok) {
 			throw new DeferredTransitionRequested(op, result.reason);
 		}
@@ -96,14 +98,18 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 
 	const mediatedUI = Object.create(ctx.ui ?? null);
 	mediatedUI.notify = (message: string, type: "info" | "warning" | "error" = "info") => {
-		capture.notifications.push({ level: type, message });
+		if (capture.notifications.length < MAX_CAPTURE_ITEMS) {
+			capture.notifications.push({ level: type, message: String(message) });
+		}
 		// Also forward to real UI if present — users still want to see it.
 		if (hasUI && typeof ctx.ui?.notify === "function") {
 			try { ctx.ui.notify(message, type); } catch { /* best-effort */ }
 		}
 	};
 	mediatedUI.setStatus = (key: string, text: string | undefined) => {
-		capture.statusUpdates.push({ key, text });
+		if (capture.statusUpdates.length < MAX_CAPTURE_ITEMS) {
+			capture.statusUpdates.push({ key: String(key), text: text === undefined ? undefined : String(text) });
+		}
 		if (typeof ctx.ui?.setStatus === "function") {
 			try { ctx.ui.setStatus(key, text); } catch { /* best-effort */ }
 		}
@@ -146,7 +152,7 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	override("reload", () => scheduleTransition("reload", () => ops!.reload()));
 	return {
 		ctx: mediated,
-		clearOwnPendingRawOp: () => rawOpToken !== null && clearPendingRawOp(rawOpToken),
+		clearOwnPendingRawOp: () => rawOpToken !== null && clearPendingRawOp(ctx, rawOpToken),
 	};
 }
 
@@ -208,8 +214,8 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		renderCall(args, theme, context) {
 			return renderToolCall("commands", args, theme, !context.isPartial);
 		},
-		async execute(_id, params, _signal, _onUpdate, _ctx) {
-			const runner = getRunner();
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const runner = getRunner(ctx);
 			if (!runner) {
 				return {
 					content: [{ type: "text", text: "Commands router unavailable: ExtensionRunner not captured (pi-control patch inactive)." }],

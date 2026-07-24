@@ -185,7 +185,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					// message reliably starts the next turn. Mid-turn switching relied
 					// on the new model choosing to end the turn, which newer models
 					// no longer do: queued follow-ups accumulated instead.
-					const scheduled = scheduleDeferred(`model switch to ${model.provider}/${model.id}`, async () => {
+					const scheduled = scheduleDeferred(ctx, `model switch to ${model.provider}/${model.id}`, async () => {
 						const ok = await pi.setModel(model);
 						if (!ok) throw new Error(`setModel failed for ${model.provider}/${model.id}`);
 						if (params.thinkingLevel) pi.setThinkingLevel(params.thinkingLevel);

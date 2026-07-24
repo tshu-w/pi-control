@@ -133,7 +133,14 @@ test("sessions and models inherit the wrapper at their public execute seam", asy
 
 test("executed commands preserve full output without duplicating captured text in details", async () => {
 	patchBindCommandContext();
+	const sessionManager = {};
+	const commandContext = {
+		hasUI: false,
+		sessionManager,
+		ui: { notify() {}, setStatus() {} },
+	};
 	const runner = {
+		sessionManager,
 		getRegisteredCommands: () => [{
 			invocationName: "loud",
 			name: "loud",
@@ -141,10 +148,7 @@ test("executed commands preserve full output without duplicating captured text i
 			sourceInfo: { path: "/extension.ts", source: "test", scope: "user" },
 		}],
 		getCommand: () => ({ handler: async (_args, ctx) => ctx.ui.notify("n".repeat(60 * 1024), "info") }),
-		createCommandContext: () => ({
-			hasUI: false,
-			ui: { notify() {}, setStatus() {} },
-		}),
+		createCommandContext: () => commandContext,
 	};
 	ExtensionRunner.prototype.bindCommandContext.call(runner, {
 		switchSession: async () => {},
@@ -155,7 +159,7 @@ test("executed commands preserve full output without duplicating captured text i
 		waitForIdle: async () => {},
 	});
 	const commands = register(registerCommandsRouter);
-	const result = await commands.execute("id", { action: "run", name: "loud", args: "" }, undefined, undefined, {});
+	const result = await commands.execute("id", { action: "run", name: "loud", args: "" }, undefined, undefined, { sessionManager });
 	assertBounded(result);
 	assert.deepEqual(Object.keys(result.details).sort(), ["fullOutputPath", "fullOutputSaved", "status", "truncated"]);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8").includes("n".repeat(1000)), true);

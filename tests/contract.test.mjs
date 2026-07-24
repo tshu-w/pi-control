@@ -34,15 +34,16 @@ test("pi still exposes the agent_settled extension event (pi >= 0.80.4)", () => 
 
 test("patch captures ops and runner when pi binds the command context", () => {
 	assert.equal(patchBindCommandContext(), true);
-	assert.equal(isArmed(), false, "must not be armed before binding");
+	const sessionManager = {};
+	assert.equal(isArmed(sessionManager), false, "must not be armed before binding");
 
-	const runner = { marker: "fake-runner" };
+	const runner = { marker: "fake-runner", sessionManager };
 	const actions = fakeActions();
 	ExtensionRunner.prototype.bindCommandContext.call(runner, actions);
 
-	assert.equal(isArmed(), true);
-	assert.equal(getRunner(), runner, "runner instance must be captured");
-	const ops = getOps();
+	assert.equal(isArmed(sessionManager), true);
+	assert.equal(getRunner(sessionManager), runner, "runner instance must be captured");
+	const ops = getOps(sessionManager);
 	for (const key of ["switchSession", "newSession", "navigateTree", "fork", "reload", "waitForIdle"]) {
 		assert.equal(ops[key], actions[key], `ops.${key} must be the closure pi passed in`);
 	}
@@ -63,7 +64,7 @@ test("upstream message APIs keep their awaited/void shapes", () => {
 });
 
 test("original bindCommandContext behavior is preserved (handlers land on the runner)", () => {
-	const runner = {};
+	const runner = { sessionManager: {} };
 	const actions = fakeActions();
 	ExtensionRunner.prototype.bindCommandContext.call(runner, actions);
 	// pi's original implementation stores the closures on the instance; if this
@@ -72,7 +73,11 @@ test("original bindCommandContext behavior is preserved (handlers land on the ru
 	assert.ok(stored.includes(actions.switchSession), "original implementation no longer receives the actions");
 });
 
-test("binding null disarms", () => {
-	ExtensionRunner.prototype.bindCommandContext.call({}, null);
-	assert.equal(isArmed(), false);
+test("binding null disarms only its own session", () => {
+	const firstSessionManager = {};
+	const secondSessionManager = {};
+	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: firstSessionManager }, fakeActions());
+	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: secondSessionManager }, null);
+	assert.equal(isArmed(firstSessionManager), true);
+	assert.equal(isArmed(secondSessionManager), false);
 });
