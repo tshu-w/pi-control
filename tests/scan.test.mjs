@@ -59,10 +59,23 @@ test("metadata hits (session name) count without snippets", async () => {
 	assert.equal(results[0].matchSnippets, undefined);
 });
 
+test("latest session name is read beyond the initial metadata window", async () => {
+	const entries = [userMsg("long-running session")];
+	for (let i = 0; i < 60; i++) entries.push(userMsg(`filler ${i}`));
+	entries.push({ type: "session_info", name: "renamed-late" });
+	const file = writeSession({ cwd: "/proj/late", name: "original", entries });
+
+	const results = await scanSessions("renamed-late", 10, undefined, { scope: "all" });
+	assert.equal(results.length, 1);
+	assert.equal(results[0].file, file);
+	assert.equal(results[0].name, "renamed-late");
+	assert.equal(results[0].matchSnippets, undefined);
+});
+
 test("limit stops the scan early, newest first", async () => {
 	const results = await scanSessions(undefined, 2, undefined, { scope: "all" });
 	assert.equal(results.length, 2);
-	assert.equal(results[0].name, "gamma", "newest session must come first");
+	assert.equal(results[0].name, "renamed-late", "newest session must come first");
 });
 
 test.after(() => fs.rmSync(agentDir, { recursive: true, force: true }));

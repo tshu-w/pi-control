@@ -92,7 +92,7 @@ export async function scanSessions(
 			if (!line.trim()) continue;
 			seen++;
 			if (seen > 50) break;
-			if (header && firstUserMsg && sessionName) break;
+			if (header && firstUserMsg) break;
 			let entry: any;
 			try { entry = JSON.parse(line); } catch { continue; }
 
@@ -100,7 +100,6 @@ export async function scanSessions(
 				header = entry;
 				if (filterCwd && header.cwd !== filterCwd) { skip = true; break; }
 			}
-			if (entry.type === "session_info" && entry.name) sessionName = entry.name;
 			if (!firstUserMsg && entry.type === "message" && entry.message?.role === "user") {
 				const content = entry.message.content;
 				if (typeof content === "string") firstUserMsg = content.slice(0, 300);
@@ -112,6 +111,19 @@ export async function scanSessions(
 			}
 		}
 		if (skip) continue;
+
+		// Session names can be changed at any point in a long session. Match
+		// SessionManager.getSessionName() by taking the latest session_info entry,
+		// including an empty name that explicitly clears the title.
+		for (let i = lines.length - 1; i >= 0; i--) {
+			const line = lines[i];
+			if (!line.includes("session_info")) continue;
+			let entry: any;
+			try { entry = JSON.parse(line); } catch { continue; }
+			if (entry.type !== "session_info") continue;
+			sessionName = typeof entry.name === "string" ? entry.name.trim() || undefined : undefined;
+			break;
+		}
 
 		let snippets: string[] | undefined;
 		if (lowerKw) {
