@@ -5,7 +5,11 @@ import * as path from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 import { Type } from "typebox";
-import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_MAX_BYTES as MAX_BYTES,
+	DEFAULT_MAX_LINES as MAX_LINES,
+	ExtensionRunner,
+} from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { patchBindCommandContext } = await jiti.import("../extensions/command-actions.ts");
@@ -14,9 +18,6 @@ const { registerModelsRouter } = await jiti.import("../extensions/model.ts");
 const { registerSessionsRouter } = await jiti.import("../extensions/session.ts");
 const { registerTreeRouter } = await jiti.import("../extensions/tree.ts");
 const { withToolOutputContract } = await jiti.import("../extensions/tool-output.ts");
-
-const MAX_BYTES = 50 * 1024;
-const MAX_LINES = 2000;
 
 function assertBounded(result) {
 	const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
