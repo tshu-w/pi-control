@@ -4,6 +4,7 @@ import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-wo
 import { Type } from "typebox";
 import { getEnabledModels } from "./utils.js";
 import { renderToolCall } from "./render-call.js";
+import { scheduleDeferred } from "./command-actions.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -86,13 +87,13 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 		description: [
 			"Model listing, switching, and consultation.",
 			"list: show available models (scoped or all).",
-			"switch: change active model for subsequent turns; preferably include `message` to continue work immediately.",
+			"switch: schedule a model change that applies when the current turn ends; include `message` to drive the next turn on the new model.",
 			"consult: one-shot call to another model (no tool access, result inline).",
 		].join(" "),
 		promptSnippet: "List, switch, or consult pi models",
 		promptGuidelines: [
 			"Use models(action='list') to discover available scoped models when the target is uncertain.",
-			"Use models(action='switch', modelId=..., message=...) when subsequent turns should continue on another model.",
+			"Use models(action='switch', modelId=..., message=...) to hand off: the switch applies when the current turn ends and the message starts the next turn on the new model \u2014 finish your turn right after calling it.",
 			"Use models(action='consult', prompt=...) for a one-shot second opinion or review without changing the active model.",
 			"Prefer scoped models; use scope='all' only when the user asks or scoped results are insufficient.",
 		],
@@ -107,8 +108,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			provider: Type.Optional(Type.String({ description: "Model provider. Optional if modelId uses provider/modelId or is unambiguous. For switch/consult." })),
 			modelId: Type.Optional(Type.String({ description: 'Model ID or provider/modelId, e.g. "gpt-5.5" or "openai-codex/gpt-5.5". For switch/consult.' })),
 			thinkingLevel: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level. For switch or consult." })),
-			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For switch." })),
-			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: '"followUp" (default) or "steer". For switch (with message).' })),
+			message: Type.Optional(Type.String({ description: "Directive for the next turn, delivered as a user message after the switch applies at end of the current turn. For switch." })),
 			// consult params
 			prompt: Type.Optional(Type.String({ description: "Prompt to send. For consult." })),
 			systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt. For consult." })),
@@ -175,27 +175,31 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					}
 					const model = resolved.model;
 
-					const success = await pi.setModel(model);
-					if (!success) {
+					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+					if (!auth.ok || !auth.apiKey) {
 						return { content: [{ type: "text", text: `No API key for ${model.provider}/${model.id}.` }], details: {} };
 					}
 
-					if (params.thinkingLevel) pi.setThinkingLevel(params.thinkingLevel);
-
-					const level = pi.getThinkingLevel();
-
-					// Send continuation message if provided
-					if (params.message) {
-						await pi.sendUserMessage(params.message, { deliverAs: params.deliverAs ?? "followUp" });
-						return {
-							content: [{ type: "text", text: `switched to ${model.provider}/${model.id} (thinking: ${level}). continuation message sent.` }],
-							details: { provider: model.provider, modelId: model.id, thinkingLevel: level, messageSent: true },
-						};
+					// Deferred switch: the model change (and thinking level) applies on
+					// agent_settled, so each turn belongs to exactly one model and the
+					// message reliably starts the next turn. Mid-turn switching relied
+					// on the new model choosing to end the turn, which newer models
+					// no longer do: queued follow-ups accumulated instead.
+					const scheduled = scheduleDeferred(`model switch to ${model.provider}/${model.id}`, async () => {
+						const ok = await pi.setModel(model);
+						if (!ok) throw new Error(`setModel failed for ${model.provider}/${model.id}`);
+						if (params.thinkingLevel) pi.setThinkingLevel(params.thinkingLevel);
+						// Upstream limit: ExtensionAPI.sendUserMessage returns void, so
+						// delivery cannot be awaited; failures surface as extension errors.
+						if (params.message) pi.sendUserMessage(params.message, { deliverAs: "followUp" });
+					});
+					if (!scheduled.ok) {
+						return { content: [{ type: "text", text: `Cannot schedule switch: ${scheduled.reason}.` }], details: {} };
 					}
 
 					return {
-						content: [{ type: "text", text: `switched to ${model.provider}/${model.id} (thinking: ${level}). no continuation message sent.` }],
-						details: { provider: model.provider, modelId: model.id, thinkingLevel: level, messageSent: false },
+						content: [{ type: "text", text: `switch to ${model.provider}/${model.id} scheduled at end of this turn${params.message ? "; your message will start the next turn as a user message" : ""}. Finish your turn now.` }],
+						details: { provider: model.provider, modelId: model.id, thinkingLevel: params.thinkingLevel, scheduled: true, messageScheduled: params.message !== undefined },
 					};
 				}
 

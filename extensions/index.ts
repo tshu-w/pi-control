@@ -17,7 +17,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { patchBindCommandContext, runPending, clearPending, isArmed, hasPending } from "./command-actions.js";
+import { patchBindCommandContext, runPending, runPendingDeferredInline, clearPending, isArmed, hasPending, hasQueuedAction } from "./command-actions.js";
 import { registerSessionsRouter } from "./session.js";
 import { registerTreeRouter } from "./tree.js";
 import { registerModelsRouter } from "./model.js";
@@ -94,16 +94,25 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Execute pending actions after agent fully settles ──
 	// agent_settled (pi >= 0.80.4) fires only when no auto-retry, compaction
-	// retry, or queued follow-up remains. setTimeout(0) escapes the emit
-	// stack so session replacement never runs inside the settled emit.
+	// retry, or queued follow-up remains.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!hasPending()) return;
 		const notify = ctx.hasUI
 			? (msg: string, level: "info" | "warning" | "error") => ctx.ui.notify(msg, level)
 			: undefined;
+		// Deferred public-API work (model switch) completes inside this emit:
+		// core publishes settled to external listeners and resolves idle only
+		// after extension handlers return, so an external prompt racing the
+		// settled event already sees the new model.
+		if (await runPendingDeferredInline(notify)) return;
 		const runtime = {
 			sendFollowUp: async (msg: string) => { await pi.sendUserMessage(msg, { deliverAs: "followUp" }); },
 		};
+		// Session transitions tear down this runner: setTimeout(0) escapes the
+		// emit stack so session replacement never runs inside the settled emit.
+		// runPending additionally awaits ops.waitForIdle() first, so a prompt
+		// that raced the public settled event finishes instead of being torn
+		// down mid-turn by the transition.
 		setTimeout(() => {
 			runPending(notify, runtime).catch((e) => {
 				if (notify) notify(`pi-control runPending error: ${e}`, "error");
@@ -125,9 +134,12 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// Clear stale pending state on session shutdown.
+	// Clear stale pending state on session shutdown. Only unclaimed queued
+	// actions are stale: a transition in flight fires session_shutdown itself
+	// (core emits it before switchSession/reload resolve) and is released by
+	// runPending's finally, not here.
 	pi.on("session_shutdown", async () => {
-		if (hasPending()) {
+		if (hasQueuedAction()) {
 			console.warn("[pi-control] session_shutdown fired while a transition was pending; dropping it.");
 		}
 		clearPending();

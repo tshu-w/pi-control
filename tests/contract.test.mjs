@@ -43,9 +43,23 @@ test("patch captures ops and runner when pi binds the command context", () => {
 	assert.equal(isArmed(), true);
 	assert.equal(getRunner(), runner, "runner instance must be captured");
 	const ops = getOps();
-	for (const key of ["switchSession", "newSession", "navigateTree", "fork", "reload"]) {
+	for (const key of ["switchSession", "newSession", "navigateTree", "fork", "reload", "waitForIdle"]) {
 		assert.equal(ops[key], actions[key], `ops.${key} must be the closure pi passed in`);
 	}
+});
+
+test("upstream message APIs keep their awaited/void shapes", () => {
+	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+	const types = readFileSync(path.join(path.dirname(entry), "core", "extensions", "types.d.ts"), "utf8");
+	// runPending awaits waitForIdle before transitions so a turn that raced the
+	// public settled event finishes instead of being torn down mid-flight.
+	assert.match(types, /waitForIdle: \(\) => Promise<void>;/, "ExtensionCommandContextActions.waitForIdle missing \u2014 transition idle-gating would silently disable");
+	// ExtensionAPI.sendUserMessage is fire-and-forget (returns void): several
+	// routers document asynchronous delivery because of this. If it becomes
+	// awaitable, upgrade queue_message/nav/compact/reload/model-handoff delivery.
+	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";\s*\}\): void;/, "ExtensionAPI.sendUserMessage is no longer void \u2014 upgrade to awaited delivery");
+	// resume/new/fork followUp delivery awaits the replaced-session context API.
+	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";\s*\}\): Promise<void>;/, "ReplacedSessionContext.sendUserMessage no longer returns a Promise");
 });
 
 test("original bindCommandContext behavior is preserved (handlers land on the runner)", () => {

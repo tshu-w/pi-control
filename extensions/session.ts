@@ -157,9 +157,12 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: "A session transition is already scheduled. Use the transition's `message` parameter instead of queue_message." }], details: {} };
 					}
 					const deliverAs = params.deliverAs ?? "followUp";
-					await pi.sendUserMessage(params.message, { deliverAs });
+					// Upstream limit: ExtensionAPI.sendUserMessage returns void (core
+					// fire-and-forgets the prompt pipeline), so enqueueing cannot be
+					// awaited or confirmed here. Failures surface as extension errors.
+					pi.sendUserMessage(params.message, { deliverAs });
 					return {
-						content: [{ type: "text", text: `Message queued as ${deliverAs}.` }],
+						content: [{ type: "text", text: `Message submitted as ${deliverAs} (delivery is asynchronous).` }],
 						details: { deliverAs },
 					};
 				}

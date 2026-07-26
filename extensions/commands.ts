@@ -83,7 +83,7 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 		if (!ops) {
 			throw new DeferredTransitionRequested(op, "command ops unavailable");
 		}
-		const result = scheduleRawOp(op, async () => { await runner(); });
+		const result = scheduleRawOp(op, runner);
 		if (!result.ok) {
 			throw new DeferredTransitionRequested(op, result.reason);
 		}

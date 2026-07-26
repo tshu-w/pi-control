@@ -36,11 +36,13 @@ To drive `resume` / `new` / `navigate` / `fork` from tool calls, pi-control patc
 
 The full private-API surface, for upgrade auditing:
 
-- `ExtensionRunner.prototype.bindCommandContext` — patched to capture the five session-transition closures (`switchSession` / `newSession` / `navigateTree` / `fork` / `reload`) and the runner instance
+- `ExtensionRunner.prototype.bindCommandContext` — patched to capture the five session-transition closures (`switchSession` / `newSession` / `navigateTree` / `fork` / `reload`) plus `waitForIdle` and the runner instance
 - `runner.getRegisteredCommands()` / `runner.getCommand()` / `runner.createCommandContext()` — used by the `commands` router to enumerate and invoke third-party slash commands
 - `runner.runtime.sendUserMessage` — used to deliver the follow-up message after a `reload` (the pre-reload extension closure would be stale)
 
-The patch is idempotent and applied once on activation. If it fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.80.x.
+The patch and its captured state live in a process-wide slot (`Symbol.for` on `globalThis`), so pi's `/reload` — which re-executes extension modules as fresh instances — neither re-wraps the prototype nor splits state between module instances. If the patch fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.80.x.
+
+Timing semantics: a model switch is applied inside the `agent_settled` extension emit, before pi publishes settled to SDK/RPC/UI listeners — an external prompt racing the settled event already runs on the new model. Session transitions cannot run inside that emit (they tear down the runner), so they run just after; before executing, pi-control awaits `waitForIdle()` so a prompt that raced into that window finishes instead of being torn down mid-turn. A small window between the idle check and the transition's first step remains — closing it fully needs an upstream pre-publication seam. Follow-up delivery after `resume` / `new` / `fork` is awaited via the replaced-session context; `queue_message`, `navigate`, `compact`, `reload`, and model-handoff messages go through pi's fire-and-forget `sendUserMessage` (returns `void`), so those tools report submission, not confirmed enqueueing, and delivery failures surface as extension errors.
 
 When pi adds first-class APIs, the hack goes away. Tracking upstream at [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
