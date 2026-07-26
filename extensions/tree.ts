@@ -5,6 +5,7 @@ import { formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 import { renderToolCall } from "./render-call.js";
+import { withToolOutputContract } from "./tool-output.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
 
@@ -25,7 +26,7 @@ function resolveNavigateTarget(sm: any, target: string): any | null {
 }
 
 export function registerTreeRouter(pi: ExtensionAPI) {
-	pi.registerTool({
+	pi.registerTool(withToolOutputContract({
 		name: "tree",
 		label: "Tree",
 		description: [
@@ -92,7 +93,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						if (!tree || tree.length === 0 || branchEntries.length === 0) {
 							return {
 								content: [{ type: "text", text: "No entries in session." }],
-								details: { scope: "all", currentBranch: null, forkPoints: { total: 0, shown: 0, offset, limit, hasMore: false, groups: [] }, totalSideBranches: 0 },
+								details: { scope: "all", total: 0, shown: 0, offset, limit, hasMore: false, totalSideBranches: 0 },
 							};
 						}
 
@@ -101,7 +102,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						if (!overview) {
 							return {
 								content: [{ type: "text", text: "No entries in session." }],
-								details: { scope: "all", currentBranch: null, forkPoints: { total: 0, shown: 0, offset, limit, hasMore: false, groups: [] }, totalSideBranches: 0 },
+								details: { scope: "all", total: 0, shown: 0, offset, limit, hasMore: false, totalSideBranches: 0 },
 							};
 						}
 
@@ -109,15 +110,12 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 							content: [{ type: "text", text: renderGroupedOverview(overview).join("\n") }],
 							details: {
 								scope: "all",
-								currentBranch: overview.currentBranch,
-								forkPoints: {
-									total: overview.totalForkPoints,
-									shown: overview.shownForkPoints,
-									offset: overview.offset,
-									limit: overview.limit,
-									hasMore: overview.hasMore,
-									groups: overview.forkPoints,
-								},
+								tipEntryId: overview.currentBranch.tipEntry.id,
+								total: overview.totalForkPoints,
+								shown: overview.shownForkPoints,
+								offset: overview.offset,
+								limit: overview.limit,
+								hasMore: overview.hasMore,
 								totalSideBranches: overview.totalSideBranches,
 							},
 						};
@@ -261,7 +259,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					);
 					return {
 						content: [{ type: "text", text: `labels (${labeled.length})\n${lines.join("\n")}` }],
-						details: { labels: labeled },
+						details: { labels: labeled.map(({ id, label, onBranch }) => ({ id, label, onBranch })) },
 					};
 				}
 
@@ -300,7 +298,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					pi.setLabel(params.entryId, params.label);
 					return {
 						content: [{ type: "text", text: `Label "${params.label}" set on [${params.entryId.slice(0, 8)}].` }],
-						details: { entryId: params.entryId, label: params.label },
+						details: { entryId: params.entryId },
 					};
 				}
 
@@ -327,7 +325,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 							message: params.message,
 						},
 						successText: `Scheduled tree navigation to entry: ${navEntry.id}${params.message ? " (with followUp message)" : ""}`,
-						details: { scheduled: "navigate", entryId: navEntry.id, target: rawTarget, message: params.message },
+						details: { scheduled: "navigate", entryId: navEntry.id, messageScheduled: params.message !== undefined },
 					});
 				}
 
@@ -353,7 +351,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						fallbackHint: "Use built-in `/fork` instead.",
 						action: { kind: "fork", id: target.id, message: params.message },
 						successText: `Scheduled fork from entry: ${target.id}${params.message ? " (with followUp message)" : ""}`,
-						details: { scheduled: "fork", entryId: target.id, message: params.message },
+						details: { scheduled: "fork", entryId: target.id, messageScheduled: params.message !== undefined },
 					});
 				}
 
@@ -372,7 +370,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					});
 					return {
 						content: [{ type: "text", text: "Compaction triggered." + (params.customInstructions ? ` Instructions: "${params.customInstructions}"` : "") + (params.message ? " (with custom followUp message)" : "") }],
-						details: { scheduled: "compact", message: params.message },
+						details: { scheduled: "compact", messageScheduled: params.message !== undefined },
 					};
 				}
 
@@ -380,5 +378,5 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
 			}
 		},
-	});
+	}));
 }

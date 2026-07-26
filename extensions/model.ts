@@ -1,10 +1,10 @@
 import { complete, getModel, StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getEnabledModels } from "./utils.js";
 import { renderToolCall } from "./render-call.js";
 import { scheduleDeferred } from "./command-actions.js";
+import { withToolOutputContract } from "./tool-output.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -81,7 +81,7 @@ async function resolveModel(
 }
 
 export function registerModelsRouter(pi: ExtensionAPI) {
-	pi.registerTool({
+	pi.registerTool(withToolOutputContract({
 		name: "models",
 		label: "Models",
 		description: [
@@ -237,24 +237,23 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					);
 
 					if (response.stopReason === "aborted") {
-						return { content: [{ type: "text", text: "Consultation aborted." }], details: {} };
+						return { content: [{ type: "text", text: "Consultation aborted." }], details: {}, usage: response.usage };
 					}
 
 					const text = response.content
 						.filter((c): c is { type: "text"; text: string } => c.type === "text")
 						.map(c => c.text).join("\n");
 
-					const truncation = truncateHead(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
 					const usage = response.usage;
 					const stats = [
 						usage ? `↑${usage.input} ↓${usage.output}` : "",
 						usage?.cost?.total ? `$${usage.cost.total.toFixed(4)}` : "",
 					].filter(Boolean).join(" ");
-					const truncNote = truncation.truncated ? "\n\n*(output truncated)*" : "";
 
 					return {
-						content: [{ type: "text", text: `response from ${model.provider}/${model.id}${useReasoning ? ` (thinking: ${thinkingLevel})` : ""} ${stats}\n\n${truncation.content}${truncNote}` }],
-						details: { provider: model.provider, modelId: model.id, thinkingLevel: useReasoning ? thinkingLevel : undefined, usage, truncated: truncation.truncated },
+						content: [{ type: "text", text: `response from ${model.provider}/${model.id}${useReasoning ? ` (thinking: ${thinkingLevel})` : ""} ${stats}\n\n${text}` }],
+						details: { provider: model.provider, modelId: model.id, thinkingLevel: useReasoning ? thinkingLevel : undefined },
+						usage,
 					};
 				}
 
@@ -262,5 +261,8 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
 			}
 		},
-	});
+	}, {
+		preserveFullOutput: (params) => params.action === "consult",
+		tempPrefix: "pi-control-consult",
+	}));
 }

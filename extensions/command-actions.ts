@@ -130,7 +130,7 @@ export interface ScheduleParams {
 	action: PendingAction;
 	/** Success text shown to the model when the action was scheduled. */
 	successText: string;
-	/** Structured details echoed back to the model. */
+	/** Persisted metadata for rendering, state, or follow-up location. */
 	details?: Record<string, any>;
 }
 

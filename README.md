@@ -15,6 +15,8 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 | `models` | `list`, `switch`, `consult` |
 | `commands` | `list`, `run` |
 
+All model-visible tool results and errors are capped at 50KB / 2000 lines. Truncated model consultations and already-executed slash commands are best-effort saved to a temporary file, because replay may be expensive or unsafe. Tool-result `details` retain only structured state, rendering, and follow-up metadata.
+
 **Status line** (event-driven)
 
 Appended to the last user message on state changes:
@@ -58,7 +60,8 @@ resume/new/navigate/fork silently degrade at runtime. `tests/command-actions.tes
 covers the deferred-action state machine (single pending slot,
 consume-before-await, cancellation/error paths, follow-up delivery) with
 recording fakes in place of pi's closures. `tests/scan.test.mjs` covers
-session search filtering and own-output exclusion.
+session search filtering and own-output exclusion. `tests/output-contract.test.mjs`
+covers final output bounds, full-output preservation, error handling, and lean details.
 
 ## License
 

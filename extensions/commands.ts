@@ -40,6 +40,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
+import { withToolOutputContract } from "./tool-output.js";
 
 class DeferredTransitionRequested extends Error {
 	constructor(public op: string, public schedulingError?: string) {
@@ -175,19 +176,14 @@ function renderResult(
 	return {
 		content: [{ type: "text", text: lines.join("\n") }],
 		details: {
-			command,
-			args,
 			status,
-			notifications: capture.notifications,
-			statusUpdates: capture.statusUpdates,
-			...(extra.scheduled ? { scheduledTransition: extra.scheduled } : {}),
-			...(extra.error ? { error: extra.error } : {}),
+			...(extra.scheduled ? { scheduledTransition: { op: extra.scheduled.op } } : {}),
 		},
 	};
 }
 
 export function registerCommandsRouter(pi: ExtensionAPI) {
-	pi.registerTool({
+	pi.registerTool(withToolOutputContract({
 		name: "commands",
 		label: "Commands",
 		description: [
@@ -254,8 +250,6 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						details: {
 							commands: filtered.map(c => ({
 								invocationName: c.invocationName,
-								name: c.name,
-								description: c.description,
 								source: c.sourceInfo.source,
 								path: c.sourceInfo.path,
 								scope: c.sourceInfo.scope,
@@ -275,10 +269,9 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					}
 					const cmd = runner.getCommand(name);
 					if (!cmd) {
-						const available = (runner.getRegisteredCommands() as any[]).map(c => c.invocationName);
 						return {
-							content: [{ type: "text", text: `No command named "${name}". Available: ${available.length ? available.join(", ") : "(none)"}.` }],
-							details: { error: "not-found", name, available },
+							content: [{ type: "text", text: `No command named "${name}". Use commands(action="list") to see available commands.` }],
+							details: { error: "not-found" },
 						};
 					}
 
@@ -333,5 +326,8 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 
 			return { content: [{ type: "text", text: `Unknown action: ${params.action}` }], details: {} };
 		},
-	});
+	}, {
+		preserveFullOutput: (params) => params.action === "run",
+		tempPrefix: "pi-control-command",
+	}));
 }

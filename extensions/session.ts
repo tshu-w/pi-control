@@ -5,9 +5,10 @@ import { Type } from "typebox";
 import { getSessionsDir, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
+import { withToolOutputContract } from "./tool-output.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
-	pi.registerTool({
+	pi.registerTool(withToolOutputContract({
 		name: "sessions",
 		label: "Sessions",
 		description: [
@@ -104,7 +105,10 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 
 					return {
 						content: [{ type: "text", text: lines.join("\n\n") + "\n\nUse sessions(action='resume', sessionFile=...) to switch." }],
-						details: { results, scope },
+						details: {
+							results: results.map(({ file, sessionId, timestamp, name, cwd }) => ({ file, sessionId, timestamp, name, cwd })),
+							scope,
+						},
 					};
 				}
 
@@ -120,7 +124,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						fallbackHint: "Use built-in `/resume` instead.",
 						action: { kind: "resume", file: params.sessionFile!, message: params.message },
 						successText: `Scheduled session switch to: ${params.sessionFile}${params.message ? " (with followUp message)" : ""}`,
-						details: { scheduled: "resume", sessionFile: params.sessionFile, message: params.message },
+						details: { scheduled: "resume", sessionFile: params.sessionFile, messageScheduled: params.message !== undefined },
 					});
 				}
 
@@ -132,7 +136,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						fallbackHint: "Use built-in `/new` instead.",
 						action: { kind: "new", parentSession, message: params.message },
 						successText: `Scheduled new session creation${params.message ? " (with followUp message)" : ""}.`,
-						details: { scheduled: "new", message: params.message },
+						details: { scheduled: "new", messageScheduled: params.message !== undefined },
 					});
 				}
 
@@ -173,7 +177,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						fallbackHint: "Use built-in `/reload` instead.",
 						action: { kind: "reload", message: params.message },
 						successText: `Scheduled runtime reload${params.message ? " (with followUp message)" : ""}.`,
-						details: { scheduled: "reload", message: params.message },
+						details: { scheduled: "reload", messageScheduled: params.message !== undefined },
 					});
 				}
 
@@ -181,5 +185,5 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
 			}
 		},
-	});
+	}));
 }
