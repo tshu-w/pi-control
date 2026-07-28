@@ -333,9 +333,10 @@ test("a new ExtensionRunner prototype identity invalidates stale session capture
 	assert.equal(prototypeB.bindCommandContext, wrappedB, "new identity must remain idempotent");
 
 	const replacement = function (actions) { originalCalls.push(["replacement", this, actions]); };
+	Object.defineProperty(replacement, Symbol.for("pi-control:bind-command-context-patch"), { value: true });
 	prototypeB.bindCommandContext = replacement;
 	assert.equal(patchBindCommandContext(prototypeB), true);
-	assert.notEqual(prototypeB.bindCommandContext, replacement, "a replaced method on a known prototype must be wrapped again");
+	assert.notEqual(prototypeB.bindCommandContext, replacement, "an older marked wrapper must be wrapped again");
 	prototypeB.bindCommandContext.call(runnerB, actions);
 	assert.deepEqual(originalCalls.map(([name]) => name), ["a", "b", "replacement"]);
 
