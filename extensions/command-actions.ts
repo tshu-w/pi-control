@@ -76,25 +76,16 @@ interface CommandState {
 	runner: any;
 }
 
-type CommandContextPrototype = {
-	bindCommandContext: (actions: any) => unknown;
-};
-
 interface CommandRegistry {
 	states: WeakMap<object, CommandState>;
-	patchedPrototypes: WeakSet<object>;
-	activePrototype: object | null;
+	patched: boolean;
 }
 
 const REGISTRY_KEY = Symbol.for("pi-control:command-actions");
-const PATCH_MARKER = Symbol.for("pi-control:bind-command-context-patch");
-const PATCH_VERSION = 2;
 const registry = ((globalThis as any)[REGISTRY_KEY] ??= {
 	states: new WeakMap<object, CommandState>(),
-}) as CommandRegistry & { patched?: boolean };
-// Migrate process-wide state created by an older extension instance.
-registry.patchedPrototypes ??= new WeakSet<object>();
-registry.activePrototype ??= null;
+	patched: false,
+}) as CommandRegistry;
 
 export type CommandOwner = object;
 
@@ -215,32 +206,13 @@ export function getOps(owner: CommandOwner): CommandOps | null { return stateFor
 
 // ── Patch ───────────────────────────────────────────────────
 
-export function patchBindCommandContext(
-	prototype: CommandContextPrototype = ExtensionRunner.prototype,
-): boolean {
+export function patchBindCommandContext(): boolean {
+	if (registry.patched) return true;
 	try {
-		const current = prototype.bindCommandContext;
+		const current = ExtensionRunner.prototype.bindCommandContext;
 		if (typeof current !== "function") return false;
 
-		// A new class identity invalidates every session's closures captured from
-		// the old runner. Each active session is repopulated on its next bind.
-		if (registry.activePrototype !== prototype) {
-			registry.activePrototype = prototype;
-			registry.states = new WeakMap<object, CommandState>();
-		}
-
-		if (registry.patchedPrototypes.has(prototype)) {
-			if ((current as any)[PATCH_MARKER] === PATCH_VERSION) return true;
-			// Another extension or an older pi-control version installed an
-			// incompatible wrapper on this prototype. Wrap the current method below.
-			registry.patchedPrototypes.delete(prototype);
-		} else if ((current as any)[PATCH_MARKER] === PATCH_VERSION) {
-			// Adopt a compatible wrapper installed by another fresh module instance.
-			registry.patchedPrototypes.add(prototype);
-			return true;
-		}
-
-		const wrapped = function (this: any, actions: any) {
+		ExtensionRunner.prototype.bindCommandContext = function (actions: any) {
 			const state = stateFor(this, true)!;
 			state.ops = actions ? {
 				switchSession: actions.switchSession,
@@ -255,9 +227,7 @@ export function patchBindCommandContext(
 			state.runner = actions ? this : null;
 			return current.call(this, actions);
 		};
-		Object.defineProperty(wrapped, PATCH_MARKER, { value: PATCH_VERSION });
-		prototype.bindCommandContext = wrapped;
-		registry.patchedPrototypes.add(prototype);
+		registry.patched = true;
 		return true;
 	} catch {
 		return false;
