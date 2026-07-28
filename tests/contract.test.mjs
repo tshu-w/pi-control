@@ -73,11 +73,12 @@ test("original bindCommandContext behavior is preserved (handlers land on the ru
 	assert.ok(stored.includes(actions.switchSession), "original implementation no longer receives the actions");
 });
 
-test("binding null disarms only its own session", () => {
+test("binding null disarms only its own session and drops its runner", () => {
 	const firstSessionManager = {};
 	const secondSessionManager = {};
 	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: firstSessionManager }, fakeActions());
 	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: secondSessionManager }, null);
 	assert.equal(isArmed(firstSessionManager), true);
 	assert.equal(isArmed(secondSessionManager), false);
+	assert.equal(getRunner(secondSessionManager), null);
 });

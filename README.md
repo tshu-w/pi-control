@@ -42,7 +42,7 @@ The full private-API surface, for upgrade auditing:
 - `runner.getRegisteredCommands()` / `runner.getCommand()` / `runner.createCommandContext()` — used by the `commands` router to enumerate and invoke third-party slash commands
 - `runner.runtime.sendUserMessage` — used to deliver the follow-up message after a `reload` (the pre-reload extension closure would be stale)
 
-Captured command state lives in a process-wide registry keyed by session manager, so one Pi session cannot consume another session's pending transition or runner bindings. The patch is idempotent across `/reload`, which re-executes extension modules as fresh instances. If the patch fails (pi internal drift, version mismatch), the affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.82.0.
+Captured command state lives in a process-wide registry keyed by session manager. A process-wide wrapper marker prevents duplicate wrapping across `/reload`, while a `WeakSet` tracks each patched `ExtensionRunner.prototype`. If an in-process upgrade exposes a new class identity, pi-control patches that prototype too and invalidates every session's closures captured from the old runner until each active session binds again. If the patch still fails (pi internal drift or an unreachable runner class), affected actions fall back to printing the equivalent slash command and the rest of the tool surface keeps working. Compatibility is therefore tighter than a normal extension; requires pi >= 0.80.4 (deferred transitions run on the `agent_settled` event), tested against `@earendil-works/pi-coding-agent` 0.82.0.
 
 Timing semantics: a model switch is applied inside the `agent_settled` extension emit, before pi publishes settled to SDK/RPC/UI listeners — an external prompt racing the settled event already runs on the new model. Session transitions cannot run inside that emit (they tear down the runner), so they run just after; before executing, pi-control awaits `waitForIdle()` so a prompt that raced into that window finishes instead of being torn down mid-turn. A small window between the idle check and the transition's first step remains — closing it fully needs an upstream pre-publication seam. Follow-up delivery after `resume` / `new` / `fork` is awaited via the replaced-session context; `queue_message`, `navigate`, `compact`, `reload`, and model-handoff messages go through pi's fire-and-forget `sendUserMessage` (returns `void`), so those tools report submission, not confirmed enqueueing, and delivery failures surface as extension errors.
 
@@ -57,9 +57,10 @@ npm install && npm test
 `tests/contract.test.mjs` pins the private-API assumptions above against the
 installed pi package — run it after every pi upgrade; it fails before
 resume/new/navigate/fork silently degrade at runtime. `tests/command-actions.test.mjs`
-covers the deferred-action state machine (single pending slot,
-consume-before-await, cancellation/error paths, follow-up delivery, and
-cross-session isolation) with recording fakes in place of pi's closures.
+covers prototype-identity recovery plus the deferred-action state machine
+(single pending slot, consume-before-await, cancellation/error paths,
+follow-up delivery, and cross-session isolation) with recording fakes in place
+of pi's closures.
 `tests/commands.test.mjs` covers bounded third-party command capture.
 `tests/scan.test.mjs` covers session search filtering, page caps, and own-output
 exclusion. `tests/output-contract.test.mjs` covers final output bounds,

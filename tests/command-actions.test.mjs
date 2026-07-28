@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import {
 	patchBindCommandContext, scheduleAction, scheduleRawOp, scheduleDeferred, isPendingRawOp, clearPendingRawOp,
-	runPending, runPendingDeferredInline, clearPending, hasPending, hasQueuedAction, isArmed,
+	runPending, runPendingDeferredInline, clearPending, hasPending, hasQueuedAction, isArmed, getOps, getRunner,
 } from "../extensions/command-actions.ts";
 
 const calls = [];
@@ -283,11 +283,11 @@ test("headless cancelled transitions reach console.warn", async () => {
 test("reload-refreshed module instances share one patch and one state", async () => {
 	reset();
 	// Pi's /reload re-executes extension modules as fresh instances (module
-	// cache cleared). A second instance must not re-wrap the prototype and must
-	// see the same ops/pending/runner state.
+	// cache cleared). A second instance must not re-wrap the same prototype and
+	// must see the same ops/pending/runner state.
 	const before = ExtensionRunner.prototype.bindCommandContext;
 	const mod2 = await import(new URL("../extensions/command-actions.ts?reload=2", import.meta.url).href);
-	assert.equal(mod2.patchBindCommandContext(), true, "second instance must see the process-wide patch as installed");
+	assert.equal(mod2.patchBindCommandContext(), true, "second instance must recognize the marked prototype");
 	assert.equal(ExtensionRunner.prototype.bindCommandContext, before, "second patch call must not re-wrap bindCommandContext");
 
 	schedule({ kind: "reload" });
@@ -298,4 +298,48 @@ test("reload-refreshed module instances share one patch and one state", async ()
 	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
 	assert.equal(mod2.isArmed(owner), true, "re-binding must arm every instance");
 	assert.equal(mod2.getRunner(owner), fakeRunner, "runner capture must be shared");
+});
+
+test("a new ExtensionRunner prototype identity invalidates stale session captures", () => {
+	reset();
+	const originalCalls = [];
+	const prototypeA = {
+		bindCommandContext(actions) { originalCalls.push(["a", this, actions]); },
+	};
+	const prototypeB = {
+		bindCommandContext(actions) { originalCalls.push(["b", this, actions]); },
+	};
+	const ownerA = {};
+	const ownerB = {};
+	const runnerA = { sessionManager: ownerA };
+	const runnerB = { sessionManager: ownerB };
+
+	assert.equal(patchBindCommandContext(prototypeA), true);
+	const wrappedA = prototypeA.bindCommandContext;
+	prototypeA.bindCommandContext.call(runnerA, actions);
+	assert.equal(getRunner(ownerA), runnerA);
+	assert.equal(isArmed(ownerA), true);
+	assert.equal(patchBindCommandContext(prototypeA), true);
+	assert.equal(prototypeA.bindCommandContext, wrappedA, "same identity must not be wrapped twice");
+
+	assert.equal(patchBindCommandContext(prototypeB), true);
+	assert.equal(isArmed(ownerA), false, "new identity must invalidate all old session closures");
+	assert.equal(getRunner(ownerA), null);
+	const wrappedB = prototypeB.bindCommandContext;
+	prototypeB.bindCommandContext.call(runnerB, actions);
+	assert.equal(getRunner(ownerB), runnerB);
+	assert.equal(getOps(ownerB).reload, actions.reload);
+	assert.equal(patchBindCommandContext(prototypeB), true);
+	assert.equal(prototypeB.bindCommandContext, wrappedB, "new identity must remain idempotent");
+
+	const replacement = function (actions) { originalCalls.push(["replacement", this, actions]); };
+	prototypeB.bindCommandContext = replacement;
+	assert.equal(patchBindCommandContext(prototypeB), true);
+	assert.notEqual(prototypeB.bindCommandContext, replacement, "a replaced method on a known prototype must be wrapped again");
+	prototypeB.bindCommandContext.call(runnerB, actions);
+	assert.deepEqual(originalCalls.map(([name]) => name), ["a", "b", "replacement"]);
+
+	// Restore the real prototype and primary fixture for later imports/tests.
+	patchBindCommandContext();
+	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
 });

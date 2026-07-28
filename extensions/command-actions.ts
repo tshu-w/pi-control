@@ -76,16 +76,24 @@ interface CommandState {
 	runner: any;
 }
 
+type CommandContextPrototype = {
+	bindCommandContext: (actions: any) => unknown;
+};
+
 interface CommandRegistry {
-	patched: boolean;
 	states: WeakMap<object, CommandState>;
+	patchedPrototypes: WeakSet<object>;
+	activePrototype: object | null;
 }
 
 const REGISTRY_KEY = Symbol.for("pi-control:command-actions");
+const PATCH_MARKER = Symbol.for("pi-control:bind-command-context-patch");
 const registry = ((globalThis as any)[REGISTRY_KEY] ??= {
-	patched: false,
 	states: new WeakMap<object, CommandState>(),
-}) as CommandRegistry;
+}) as CommandRegistry & { patched?: boolean };
+// Migrate process-wide state created by an older extension instance.
+registry.patchedPrototypes ??= new WeakSet<object>();
+registry.activePrototype ??= null;
 
 export type CommandOwner = object;
 
@@ -206,13 +214,32 @@ export function getOps(owner: CommandOwner): CommandOps | null { return stateFor
 
 // ── Patch ───────────────────────────────────────────────────
 
-export function patchBindCommandContext(): boolean {
-	if (registry.patched) return true;
+export function patchBindCommandContext(
+	prototype: CommandContextPrototype = ExtensionRunner.prototype,
+): boolean {
 	try {
-		const orig = ExtensionRunner.prototype.bindCommandContext;
-		if (typeof orig !== "function") return false;
+		const current = prototype.bindCommandContext;
+		if (typeof current !== "function") return false;
 
-		ExtensionRunner.prototype.bindCommandContext = function (actions: any) {
+		// A new class identity invalidates every session's closures captured from
+		// the old runner. Each active session is repopulated on its next bind.
+		if (registry.activePrototype !== prototype) {
+			registry.activePrototype = prototype;
+			registry.states = new WeakMap<object, CommandState>();
+		}
+
+		if (registry.patchedPrototypes.has(prototype)) {
+			if ((current as any)[PATCH_MARKER] === true) return true;
+			// Another extension replaced the marked method on a known prototype.
+			registry.patchedPrototypes.delete(prototype);
+		} else if ((current as any)[PATCH_MARKER] === true) {
+			// Adopt a wrapper installed before this registry gained per-prototype
+			// tracking instead of adding another wrapper.
+			registry.patchedPrototypes.add(prototype);
+			return true;
+		}
+
+		const wrapped = function (this: any, actions: any) {
 			const state = stateFor(this, true)!;
 			state.ops = actions ? {
 				switchSession: actions.switchSession,
@@ -224,11 +251,12 @@ export function patchBindCommandContext(): boolean {
 			} : null;
 			// Capture runner instance so the commands router can call
 			// getRegisteredCommands() / createCommandContext() without a separate hook.
-			state.runner = this;
-			return orig.call(this, actions);
+			state.runner = actions ? this : null;
+			return current.call(this, actions);
 		};
-
-		registry.patched = true;
+		Object.defineProperty(wrapped, PATCH_MARKER, { value: true });
+		prototype.bindCommandContext = wrapped;
+		registry.patchedPrototypes.add(prototype);
 		return true;
 	} catch {
 		return false;
