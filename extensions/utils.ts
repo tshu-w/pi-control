@@ -41,22 +41,6 @@ function listSessionFiles(): Array<{ file: string; mtime: number }> {
 	return all;
 }
 
-export function getEnabledModels(cwd?: string): string[] {
-	let global: string[] | undefined;
-	let project: string[] | undefined;
-	try {
-		const raw = JSON.parse(fs.readFileSync(path.join(getAgentDir(), "settings.json"), "utf-8"));
-		global = Array.isArray(raw.enabledModels) ? raw.enabledModels : undefined;
-	} catch { /* no global settings */ }
-	if (cwd) {
-		try {
-			const raw = JSON.parse(fs.readFileSync(path.join(cwd, ".pi", "settings.json"), "utf-8"));
-			project = Array.isArray(raw.enabledModels) ? raw.enabledModels : undefined;
-		} catch { /* no project settings */ }
-	}
-	return project ?? global ?? [];
-}
-
 export interface SessionScanResult {
 	file: string;
 	sessionId: string;
@@ -79,7 +63,8 @@ export async function scanSessions(
 	const results: SessionScanResult[] = [];
 
 	for (const { file } of listSessionFiles()) {
-		if (signal?.aborted || results.length >= limit) break;
+		if (signal?.aborted) throw new Error("Session search cancelled.");
+		if (results.length >= limit) break;
 
 		let raw: string;
 		try { raw = fs.readFileSync(file, "utf-8"); } catch { continue; }
@@ -93,7 +78,7 @@ export async function scanSessions(
 		let seen = 0;
 
 		for (const line of lines) {
-			if (signal?.aborted) break;
+			if (signal?.aborted) throw new Error("Session search cancelled.");
 			if (!line.trim()) continue;
 			seen++;
 			if (seen > 50) break;
@@ -121,6 +106,7 @@ export async function scanSessions(
 		// SessionManager.getSessionName() by taking the latest session_info entry,
 		// including an empty name that explicitly clears the title.
 		for (let i = lines.length - 1; i >= 0; i--) {
+			if (signal?.aborted) throw new Error("Session search cancelled.");
 			const line = lines[i];
 			if (!line.includes("session_info")) continue;
 			let entry: any;
@@ -134,6 +120,7 @@ export async function scanSessions(
 		if (lowerKw) {
 			snippets = [];
 			for (const line of lines) {
+				if (signal?.aborted) throw new Error("Session search cancelled.");
 				if (snippets.length >= 3) break;
 				if (!line.toLowerCase().includes(lowerKw)) continue;
 				let entry: any;

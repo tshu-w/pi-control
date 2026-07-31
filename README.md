@@ -34,7 +34,7 @@ pi install git:github.com/tshu-w/pi-control
 
 pi-control patches Pi's internal command context because session transitions are not yet exposed as public extension APIs. This may require updates when Pi changes its internals; affected actions return fallback instructions when the patch is unavailable. Run `/reload` after upgrading pi-control.
 
-Requires pi >= 0.80.4 and is tested against `@earendil-works/pi-coding-agent` 0.82.0. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
+Requires pi >= 0.83.0 and is tested against `@earendil-works/pi-coding-agent` 0.83.0. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
 ## Testing
 

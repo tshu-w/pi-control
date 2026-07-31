@@ -78,6 +78,15 @@ test("limit stops the scan early, newest first", async () => {
 	assert.equal(results[0].name, "renamed-late", "newest session must come first");
 });
 
+test("cancellation rejects instead of returning partial results", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	await assert.rejects(
+		scanSessions(undefined, 10, controller.signal, { scope: "all" }),
+		/Session search cancelled/,
+	);
+});
+
 test("router limits reject unbounded page sizes", () => {
 	assert.equal(clampLimit(1_000_000, 10, 100), 100);
 	assert.equal(clampLimit(-10, 10, 100), 0);

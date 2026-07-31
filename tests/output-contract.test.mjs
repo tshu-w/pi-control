@@ -101,6 +101,217 @@ test("save failure and thrown errors remain bounded without changing semantics",
 	}
 });
 
+test("session search uses labeled records and reusable sessionFile locators", async () => {
+	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-control-search-"));
+	const sessionsDir = path.join(agentDir, "sessions", "--work--");
+	fs.mkdirSync(sessionsDir, { recursive: true });
+	const sessionFile = path.join(sessionsDir, "session.jsonl");
+	fs.writeFileSync(sessionFile, [
+		{ type: "session", id: "session-id", timestamp: "2026-07-31T18:20:00.000Z", cwd: "/work" },
+		{ type: "session_info", name: "project refactor" },
+		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Refactor the authentication module" }] } },
+	].map((entry) => JSON.stringify(entry)).join("\n"));
+
+	const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		const sessions = register(registerSessionsRouter);
+		assert.equal(sessions.parameters.properties.limit.type, "integer");
+		assert.equal(sessions.parameters.properties.limit.minimum, 1);
+		const result = await sessions.execute(
+			"id",
+			{ action: "search", keyword: "authentication", scope: "all" },
+			undefined,
+			undefined,
+			{ cwd: "/work" },
+		);
+		assert.equal(result.content[0].text, [
+			"sessions (1 returned)",
+			"",
+			'- name: "project refactor"',
+			`  sessionFile: ${JSON.stringify(sessionFile)}`,
+			'  timestamp: "2026-07-31T18:20:00.000Z"',
+			'  cwd: "/work"',
+			"  matches:",
+			'    - "[user] Refactor the authentication module"',
+			"",
+			"Use sessions(action='resume', sessionFile=...) to switch.",
+		].join("\n"));
+		assert.equal(result.details.results[0].sessionFile, sessionFile);
+		assert.equal("file" in result.details.results[0], false);
+	} finally {
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		fs.rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("transition follow-up messages reject whitespace at runtime", async () => {
+	const sessions = register(registerSessionsRouter);
+	for (const action of ["resume", "new", "reload"]) {
+		await assert.rejects(
+			sessions.execute("id", { action, message: " \n " }, undefined, undefined, {}),
+			/non-whitespace character when provided/,
+		);
+	}
+});
+
+test("resume validates session files and reports deferred execution", async () => {
+	const sessions = register(registerSessionsRouter);
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-control-resume-"));
+	const sessionFile = path.join(directory, "session.jsonl");
+	fs.writeFileSync(sessionFile, "{}\n");
+	try {
+		await assert.rejects(
+			sessions.execute("id", { action: "resume" }, undefined, undefined, {}),
+			/`sessionFile` is required for resume/,
+		);
+		await assert.rejects(
+			sessions.execute("id", { action: "resume", sessionFile: path.join(directory, "session.txt") }, undefined, undefined, {}),
+			/not a \.jsonl file/,
+		);
+		await assert.rejects(
+			sessions.execute("id", { action: "resume", sessionFile: path.join(directory, "missing.jsonl") }, undefined, undefined, {}),
+			/Session file not found/,
+		);
+
+		patchBindCommandContext();
+		const sessionManager = {};
+		ExtensionRunner.prototype.bindCommandContext.call({ sessionManager }, {
+			switchSession: async () => ({ cancelled: false }),
+			newSession: async () => ({ cancelled: false }),
+			navigateTree: async () => ({ cancelled: false }),
+			fork: async () => ({ cancelled: false }),
+			reload: async () => {},
+			waitForIdle: async () => {},
+		});
+		const result = await sessions.execute(
+			"id",
+			{ action: "resume", sessionFile, message: "continue" },
+			undefined,
+			undefined,
+			{ sessionManager },
+		);
+		assert.equal(
+			result.content[0].text,
+			`Scheduled session switch to: ${sessionFile} (with follow-up message).`,
+		);
+		assert.deepEqual(result.details, {
+			scheduled: "resume",
+			sessionFile,
+			messageScheduled: true,
+		});
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("new reports the effective parent-session settings", async () => {
+	const sessions = register(registerSessionsRouter);
+	patchBindCommandContext();
+	const sessionManager = { getSessionFile: () => "/sessions/parent.jsonl" };
+	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager }, {
+		switchSession: async () => ({ cancelled: false }),
+		newSession: async () => ({ cancelled: false }),
+		navigateTree: async () => ({ cancelled: false }),
+		fork: async () => ({ cancelled: false }),
+		reload: async () => {},
+		waitForIdle: async () => {},
+	});
+	const result = await sessions.execute(
+		"id",
+		{ action: "new", message: "continue" },
+		undefined,
+		undefined,
+		{ sessionManager },
+	);
+	assert.equal(result.content[0].text, "Scheduled new session creation (with follow-up message).");
+	assert.deepEqual(result.details, {
+		scheduled: "new",
+		linkParent: true,
+		parentSession: "/sessions/parent.jsonl",
+		messageScheduled: true,
+	});
+});
+
+test("session names are validated and rendered as JSON strings", async () => {
+	let assignedName;
+	const sessions = register(registerSessionsRouter, {
+		setSessionName(name) { assignedName = name; },
+	});
+	await assert.rejects(
+		sessions.execute("id", { action: "name", name: " \n " }, undefined, undefined, {}),
+		/non-whitespace/,
+	);
+	const name = 'review "checkpoint"';
+	const result = await sessions.execute("id", { action: "name", name }, undefined, undefined, {});
+	assert.equal(assignedName, name);
+	assert.equal(result.content[0].text, `Session named: ${JSON.stringify(name)}`);
+	assert.deepEqual(result.details, { name });
+});
+
+test("queue_message validates content and reports only the delivery mode", async () => {
+	const submissions = [];
+	const sessions = register(registerSessionsRouter, {
+		sendUserMessage(message, options) { submissions.push({ message, options }); },
+	});
+	await assert.rejects(
+		sessions.execute("id", { action: "queue_message", message: " \n " }, undefined, undefined, {}),
+		/non-whitespace/,
+	);
+	const followUp = await sessions.execute(
+		"id",
+		{ action: "queue_message", message: "continue" },
+		undefined,
+		undefined,
+		{},
+	);
+	assert.equal(followUp.content[0].text, "Message submitted as followUp.");
+	assert.deepEqual(followUp.details, { deliverAs: "followUp" });
+	const steer = await sessions.execute(
+		"id",
+		{ action: "queue_message", message: "redirect", deliverAs: "steer" },
+		undefined,
+		undefined,
+		{},
+	);
+	assert.equal(steer.content[0].text, "Message submitted as steer.");
+	assert.deepEqual(submissions, [
+		{ message: "continue", options: { deliverAs: "followUp" } },
+		{ message: "redirect", options: { deliverAs: "steer" } },
+	]);
+});
+
+test("sessions info retains complete structured state", async () => {
+	const sessions = register(registerSessionsRouter);
+	const usage = { tokens: 1200, contextWindow: 128000, percent: 0.9375 };
+	const result = await sessions.execute(
+		"id",
+		{ action: "info" },
+		undefined,
+		undefined,
+		{
+			cwd: "/work",
+			model: { provider: "provider", id: "model" },
+			getContextUsage: () => usage,
+			sessionManager: {
+				getSessionFile: () => "/sessions/current.jsonl",
+				getSessionName: () => "current",
+				getEntries: () => [{}, {}],
+			},
+		},
+	);
+	assert.deepEqual(result.details, {
+		model: "provider/model",
+		thinkingLevel: "off",
+		sessionName: "current",
+		sessionFile: "/sessions/current.jsonl",
+		cwd: "/work",
+		entries: 2,
+		usage,
+	});
+});
+
 test("sessions and models inherit the wrapper at their public execute seam", async () => {
 	const sessions = register(registerSessionsRouter);
 	const sessionResult = await sessions.execute(
@@ -129,6 +340,19 @@ test("sessions and models inherit the wrapper at their public execute seam", asy
 	);
 	assertBounded(modelResult);
 	assert.equal(modelResult.details.models.length, available.length, "structured model locators remain available");
+
+	const scopedModel = available[7];
+	const scopedResult = await models.execute(
+		"id",
+		{ action: "list", scope: "scoped" },
+		undefined,
+		undefined,
+		{
+			scopedModels: [{ model: scopedModel, thinkingLevel: "high" }],
+			modelRegistry: { getAvailable: async () => available },
+		},
+	);
+	assert.deepEqual(scopedResult.details.models, [{ provider: scopedModel.provider, id: scopedModel.id }]);
 });
 
 test("executed commands preserve full output without duplicating captured text in details", async () => {

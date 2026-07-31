@@ -1,20 +1,16 @@
 import { complete, getModel, StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { getEnabledModels } from "./utils.js";
 import { renderToolCall } from "./render-call.js";
 import { scheduleDeferred } from "./command-actions.js";
 import { withToolOutputContract } from "./tool-output.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
-/** Filter `available` models to those matching the enabledModels patterns. */
-function filterScoped(available: any[], patterns: string[]): any[] {
-	if (patterns.length === 0) return available;
-	return available.filter((m: any) => {
-		const key = `${m.provider}/${m.id}`;
-		return patterns.some(p => key === p || m.id === p);
-	});
+function scopedModels(ctx: any, available: any[]): any[] {
+	return ctx.scopedModels.length > 0
+		? ctx.scopedModels.map((entry: any) => entry.model)
+		: available;
 }
 
 /**
@@ -62,10 +58,9 @@ async function resolveModel(
 		return { model: null };
 	}
 
-	const enabledPatterns = getEnabledModels(ctx.cwd);
 	const findMatches = (models: any[]) => models.filter((m: any) => m.id === resolvedModelId || `${m.provider}/${m.id}` === resolvedModelId);
-	if (enabledPatterns.length > 0) {
-		const scopedMatches = findMatches(filterScoped(available, enabledPatterns));
+	if (ctx.scopedModels.length > 0) {
+		const scopedMatches = findMatches(scopedModels(ctx, available));
 		if (scopedMatches.length === 1) return { model: scopedMatches[0] };
 		if (scopedMatches.length > 1) {
 			return { model: null, error: `Ambiguous modelId "${modelId}" in scoped models. Use provider/modelId or pass provider.` };
@@ -122,11 +117,10 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 				case "list": {
 					const scope = params.scope ?? "scoped";
 					const available = await ctx.modelRegistry.getAvailable();
-					const enabledPatterns = getEnabledModels(ctx.cwd);
 
 					let candidates = available;
 					if (scope === "scoped") {
-						candidates = filterScoped(available, enabledPatterns);
+						candidates = scopedModels(ctx, available);
 					}
 
 					const filter = params.filter?.toLowerCase();
@@ -137,8 +131,8 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						)
 						: candidates;
 
-					const header = scope === "scoped" && enabledPatterns.length > 0
-						? `scoped models (${enabledPatterns.length} configured)`
+					const header = scope === "scoped" && ctx.scopedModels.length > 0
+						? `scoped models (${ctx.scopedModels.length} configured)`
 						: scope === "scoped"
 							? "no scoped models configured, showing all:"
 							: "all available models:";
