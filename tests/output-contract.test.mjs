@@ -133,12 +133,9 @@ test("session search uses labeled records and reusable sessionFile locators", as
 		assert.equal(result.content[0].text, [
 			"sessions (1 returned)",
 			"",
-			'- name: "project refactor"',
+			'- name="project refactor" timestamp=2026-07-31T18:20:00.000Z cwd="/work"',
 			`  sessionFile: ${JSON.stringify(sessionFile)}`,
-			'  timestamp: "2026-07-31T18:20:00.000Z"',
-			'  cwd: "/work"',
-			"  matches:",
-			'    - "[user] Refactor the authentication module"',
+			'  match: "[user] Refactor the authentication module"',
 			"",
 			"Use sessions(action='resume', sessionFile=...) to switch.",
 		].join("\n"));
@@ -358,6 +355,9 @@ test("sessions and models inherit the wrapper at their public execute seam", asy
 		},
 	);
 	assert.deepEqual(scopedResult.details.models, [{ provider: scopedModel.provider, id: scopedModel.id }]);
+	assert.ok(scopedResult.content[0].text.includes(
+		`- ${scopedModel.provider}/${scopedModel.id} context=${scopedModel.contextWindow} reasoning=false`,
+	));
 });
 
 test("executed commands preserve full output without duplicating captured text in details", async () => {
@@ -393,6 +393,30 @@ test("executed commands preserve full output without duplicating captured text i
 	assert.deepEqual(Object.keys(result.details).sort(), ["fullOutputPath", "fullOutputSaved", "status", "truncated"]);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8").includes("n".repeat(1000)), true);
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
+});
+
+test("tree list and labels use forward-only offset continuation", async () => {
+	const tree = register(registerTreeRouter);
+	const entries = Array.from({ length: 3 }, (_, index) => ({
+		id: `entry-${index + 1}`,
+		type: "message",
+		timestamp: `2026-08-01T00:00:0${index + 1}.000Z`,
+		message: { role: "user", content: `preview ${index + 1}` },
+	}));
+	const ctx = {
+		sessionManager: {
+			getEntries: () => entries,
+			getBranch: () => entries,
+			getLabel: (id) => `label-${id}`,
+		},
+	};
+
+	const list = await tree.execute("list", { action: "list", scope: "branch", limit: 1 }, undefined, undefined, ctx);
+	assert.match(list.content[0].text, /\[2 older entries\. Use offset=1 to continue\.\]$/);
+	assert.doesNotMatch(list.content[0].text, /newer entries/);
+
+	const labels = await tree.execute("labels", { action: "labels", limit: 1 }, undefined, undefined, ctx);
+	assert.match(labels.content[0].text, /\[2 more labels\. Use offset=1 to continue\.\]$/);
 });
 
 test("tree details retain label locators without copying previews", async () => {

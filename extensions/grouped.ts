@@ -306,7 +306,7 @@ export function renderGroupedOverview(overview: GroupedOverview): string[] {
 	}
 
 	if (overview.hasMore) {
-		lines.push(`... ${overview.totalForkPoints - overview.offset - overview.shownForkPoints} more fork points, use offset ${overview.offset + overview.shownForkPoints}`);
+		lines.push(`[${overview.totalForkPoints - overview.offset - overview.shownForkPoints} more fork points. Use offset=${overview.offset + overview.shownForkPoints} to continue.]`);
 	}
 
 	return lines;

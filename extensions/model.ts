@@ -1,5 +1,6 @@
 import { complete, getModel, StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderToolCall } from "./render-call.js";
 import { scheduleDeferred } from "./command-actions.js";
@@ -111,6 +112,52 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 		renderCall(args, theme, context) {
 			return renderToolCall("models", args, theme, !context.isPartial);
 		},
+		renderResult(result, { expanded, isPartial }, theme, context) {
+			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
+			if (expanded || isPartial) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+			if (context.args.action === "list") {
+				const lines = text.split("\n");
+				const modelLines = lines.filter((line) => line.startsWith("- "));
+				if (modelLines.length <= 20) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+				const footerLines = lines.slice(lines.lastIndexOf(modelLines.at(-1)!) + 1).filter(Boolean);
+				const hidden = modelLines.length - 20;
+				const visible = [
+					theme.fg("toolOutput", lines[0]!),
+					...modelLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("dim", `... (${hidden} model${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				return new Text(visible.join("\n"), 0, 0);
+			}
+
+			if (context.args.action === "consult") {
+				const separator = text.indexOf("\n\n");
+				if (separator < 0) return new Text(theme.fg("toolOutput", text), 0, 0);
+				const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated;
+				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
+				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
+				const responseLines = text.slice(separator + 2, bodyEnd).split("\n");
+				while (responseLines.at(-1) === "") responseLines.pop();
+				if (responseLines.length <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+				const hidden = responseLines.length - 15;
+				const visible = [
+					theme.fg("toolOutput", text.slice(0, separator)),
+					"",
+					...responseLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("dim", `... (${hidden} response ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerStart >= 0) visible.push("", theme.fg("toolOutput", text.slice(footerStart + 2)));
+				return new Text(visible.join("\n"), 0, 0);
+			}
+
+			return new Text(theme.fg("toolOutput", text), 0, 0);
+		},
 		async execute(_id, params, signal, onUpdate, ctx) {
 			switch (params.action) {
 				// ── list ─────────────────────────────────────────────
@@ -145,7 +192,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					}
 
 					const lines = filtered.map(m =>
-						`- \`${m.provider}/${m.id}\`  ctx:${m.contextWindow}  reasoning:${m.reasoning ?? false}`
+						`- ${m.provider}/${m.id} context=${m.contextWindow} reasoning=${m.reasoning ?? false}`
 					);
 
 					return {

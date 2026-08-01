@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { clampLimit, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
@@ -49,6 +50,27 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("sessions", args, theme, !context.isPartial);
+		},
+		renderResult(result, { expanded }, theme, context) {
+			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
+			if (expanded || context.args.action !== "search") {
+				return new Text(theme.fg("toolOutput", text), 0, 0);
+			}
+
+			const sections = text.split("\n\n");
+			const records = sections.filter((section) => section.startsWith("- name="));
+			if (records.length <= 5) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+			const visible = [sections[0]!, ...records.slice(0, 5)]
+				.map((section) => theme.fg("toolOutput", section));
+			const hidden = records.length - 5;
+			visible.push(theme.fg("dim", `... (${hidden} session${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`));
+			const footerSections = sections.filter((section) =>
+				section.startsWith("Use sessions(") || section.startsWith("[Output truncated:"),
+			);
+			visible.push(...footerSections.map((section) => theme.fg("toolOutput", section)));
+			return new Text(visible.join("\n\n"), 0, 0);
 		},
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			switch (params.action) {
@@ -101,15 +123,12 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					}
 
 					const records = results.map((result) => {
-						const lines = [
-							`- name: ${JSON.stringify(result.name || "(unnamed)")}`,
-							`  sessionFile: ${JSON.stringify(result.file)}`,
-						];
-						if (result.timestamp) lines.push(`  timestamp: ${JSON.stringify(result.timestamp)}`);
-						if (result.cwd) lines.push(`  cwd: ${JSON.stringify(result.cwd)}`);
+						let header = `- name=${JSON.stringify(result.name || "(unnamed)")}`;
+						if (result.timestamp) header += ` timestamp=${result.timestamp}`;
+						if (result.cwd) header += ` cwd=${JSON.stringify(result.cwd)}`;
+						const lines = [header, `  sessionFile: ${JSON.stringify(result.file)}`];
 						if (result.matchSnippets && result.matchSnippets.length > 0) {
-							lines.push("  matches:");
-							for (const snippet of result.matchSnippets) lines.push(`    - ${JSON.stringify(snippet)}`);
+							for (const snippet of result.matchSnippets) lines.push(`  match: ${JSON.stringify(snippet)}`);
 						} else if (result.firstMessage) {
 							lines.push(`  preview: ${JSON.stringify(result.firstMessage.slice(0, 150))}`);
 						}

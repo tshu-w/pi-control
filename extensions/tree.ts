@@ -1,5 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
@@ -71,6 +72,71 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("tree", args, theme, !context.isPartial);
+		},
+		renderResult(result, { expanded }, theme, context) {
+			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
+			if (expanded) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+			const details = result.details as { shown?: number; matches?: number } | undefined;
+			if (context.args.action === "list" && context.args.scope === "all") {
+				if (details?.shown === undefined || details.shown <= 5) {
+					return new Text(theme.fg("toolOutput", text), 0, 0);
+				}
+				const lines = text.split("\n");
+				const groups: string[][] = [];
+				const footerLines: string[] = [];
+				let currentGroup: string[] | undefined;
+				for (const line of lines.slice(1)) {
+					if (line.startsWith("[")) {
+						footerLines.push(line);
+					} else if (line.startsWith("├─ ") || line.startsWith("└─ ")) {
+						if (currentGroup) groups.push(currentGroup);
+						currentGroup = [line];
+					} else if (currentGroup) {
+						currentGroup.push(line);
+					}
+				}
+				if (currentGroup) groups.push(currentGroup);
+				if (groups.length <= 5) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+				const hidden = groups.length - 5;
+				const visible = [
+					theme.fg("toolOutput", lines[0]!),
+					"",
+					...groups.slice(0, 5).flat().map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("dim", `... (${hidden} fork point${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				return new Text(visible.join("\n"), 0, 0);
+			}
+
+			let shown: number | undefined;
+			if (context.args.action === "list" && (context.args.scope ?? "branch") === "branch") {
+				shown = details?.shown;
+			} else if (context.args.action === "search") {
+				shown = details?.matches;
+			} else if (context.args.action === "labels") {
+				shown = details?.shown;
+			} else {
+				return new Text(theme.fg("toolOutput", text), 0, 0);
+			}
+			if (shown === undefined || shown <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+			const lines = text.split("\n");
+			const itemLines = lines.slice(1, shown + 1);
+			const footerLines = lines.slice(shown + 1).filter(Boolean);
+			const hidden = shown - 15;
+			const itemLabel = context.args.action === "labels" ? "label" : "entry";
+			const visible = [
+				theme.fg("toolOutput", lines[0]!),
+				...itemLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+				"",
+				theme.fg("dim", `... (${hidden} ${itemLabel}${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
+			];
+			if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+			return new Text(visible.join("\n"), 0, 0);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
@@ -163,15 +229,11 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					});
 					const headerLabel = scope === "branch" ? "branch entries newest-first" : "all entries";
 					const header = `${headerLabel} (${page.length}/${total}, offset ${offset})`;
-					const footers: string[] = [];
-					if (offset > 0) {
-						const prevOffset = Math.max(0, offset - limit);
-						footers.push(`newer entries available via offset ${prevOffset}`);
-					}
-					if (offset + page.length < total) {
-						footers.push(`older entries available via offset ${offset + page.length}`);
-					}
-					const body = [header, ...lines, ...footers].join("\n");
+					const remaining = total - offset - page.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} older ${remaining === 1 ? "entry" : "entries"}. Use offset=${offset + page.length} to continue.]`
+						: "";
+					const body = [header, ...lines].join("\n") + continuation;
 
 					return {
 						content: [{ type: "text", text: body }],
@@ -260,8 +322,12 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					const lines = page.map(l =>
 						`- "${l.label}" → ${l.preview}${l.onBranch ? "" : "  [off-branch]"}`
 					);
+					const remaining = labeled.length - offset - page.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} more labels. Use offset=${offset + page.length} to continue.]`
+						: "";
 					return {
-						content: [{ type: "text", text: `labels (${page.length}/${labeled.length}, offset ${offset})\n${lines.join("\n")}` }],
+						content: [{ type: "text", text: `labels (${page.length}/${labeled.length}, offset ${offset})\n${lines.join("\n")}${continuation}` }],
 						details: {
 							labels: page.map(({ id, label, onBranch }) => ({ id, label, onBranch })),
 							total: labeled.length,

@@ -36,7 +36,8 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
@@ -213,6 +214,52 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("commands", args, theme, !context.isPartial);
+		},
+		renderResult(result, { expanded }, theme, context) {
+			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
+			if (expanded) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+			if (context.args.action === "list") {
+				const lines = text.split("\n");
+				const commandLines = lines.filter((line) => line.startsWith("/"));
+				if (commandLines.length <= 20) return new Text(theme.fg("toolOutput", text), 0, 0);
+
+				const footerLines = lines.slice(lines.lastIndexOf(commandLines.at(-1)!) + 1).filter(Boolean);
+				const hidden = commandLines.length - 20;
+				const visible = [
+					...commandLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("dim", `... (${hidden} command${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				return new Text(visible.join("\n"), 0, 0);
+			}
+
+			if (context.args.action === "run") {
+				const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated;
+				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
+				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
+				const lines = text.slice(0, bodyEnd).split("\n");
+				while (lines.at(-1) === "") lines.pop();
+				const captureStart = lines.findIndex((line) => line === "Notifications:" || line === "Status updates:");
+				if (captureStart < 0 || lines.length - captureStart <= 15) {
+					return new Text(theme.fg("toolOutput", text), 0, 0);
+				}
+
+				const capturedLines = lines.slice(captureStart);
+				const hidden = capturedLines.length - 15;
+				const visible = [
+					...lines.slice(0, captureStart).map((line) => theme.fg("toolOutput", line)),
+					...capturedLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("dim", `... (${hidden} command output ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerStart >= 0) visible.push("", theme.fg("toolOutput", text.slice(footerStart + 2)));
+				return new Text(visible.join("\n"), 0, 0);
+			}
+
+			return new Text(theme.fg("toolOutput", text), 0, 0);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const runner = getRunner(ctx);
