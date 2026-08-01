@@ -42,7 +42,7 @@ async function boundText(value: string, preserve: boolean, tempPrefix: string): 
 	const notice = fullOutputPath
 		? `\n\n[${summary} Full output: ${fullOutputPath}. This is a temporary file; copy or move it if it should persist.]`
 		: preserve
-			? `\n\n[${summary} Full output could not be saved; the operation already ran, so retry only if safe.]`
+			? `\n\n[${summary} Full output could not be saved to a temporary file.]`
 			: `\n\n[${summary} Narrow the filter or use pagination to continue.]`;
 	const budget = DEFAULT_MAX_BYTES - Buffer.byteLength(notice);
 	const preview = truncateHead(value, { maxBytes: budget, maxLines: DEFAULT_MAX_LINES - 2 });

@@ -94,7 +94,7 @@ test("save failure and thrown errors remain bounded without changing semantics",
 		assert.ok(error instanceof Error);
 		assert.ok(Buffer.byteLength(error.message) <= MAX_BYTES);
 		assert.ok(error.message.split("\n").length <= MAX_LINES);
-		assert.match(error.message, /operation already ran, so retry only if safe/);
+		assert.match(error.message, /Full output could not be saved to a temporary file/);
 	} finally {
 		if (originalTmpdir === undefined) delete process.env.TMPDIR;
 		else process.env.TMPDIR = originalTmpdir;
