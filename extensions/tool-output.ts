@@ -44,10 +44,9 @@ async function boundText(value: string, preserve: boolean, tempPrefix: string): 
 		: preserve
 			? `\n\n[${summary} Full output could not be saved to a temporary file.]`
 			: `\n\n[${summary} Narrow the filter or use pagination to continue.]`;
-	const budget = DEFAULT_MAX_BYTES - Buffer.byteLength(notice);
-	const preview = truncateHead(value, { maxBytes: budget, maxLines: DEFAULT_MAX_LINES - 2 });
-	let content = preview.content;
-	if (!content && budget > 0) content = utf8Prefix(value.split("\n")[0] ?? "", budget);
+	// The limits bound the content; the notice sits on top of it.
+	let content = full.content;
+	if (!content) content = utf8Prefix(value.split("\n")[0] ?? "", DEFAULT_MAX_BYTES);
 	return {
 		text: content + notice,
 		truncated: true,

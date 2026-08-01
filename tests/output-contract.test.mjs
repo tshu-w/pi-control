@@ -19,10 +19,16 @@ const { registerSessionsRouter } = await jiti.import("../extensions/session.ts")
 const { registerTreeRouter } = await jiti.import("../extensions/tree.ts");
 const { withToolOutputContract } = await jiti.import("../extensions/tool-output.ts");
 
+// The limits bound the content; the truncation notice sits on top of it.
+function assertContentBounded(text) {
+	const content = text.split("\n\n[Output truncated:")[0];
+	assert.ok(Buffer.byteLength(content) <= MAX_BYTES, `expected <= ${MAX_BYTES} bytes`);
+	assert.ok(content.split("\n").length <= MAX_LINES, `expected <= ${MAX_LINES} lines`);
+}
+
 function assertBounded(result) {
 	const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-	assert.ok(Buffer.byteLength(text) <= MAX_BYTES, `expected <= ${MAX_BYTES} bytes`);
-	assert.ok(text.split("\n").length <= MAX_LINES, `expected <= ${MAX_LINES} lines`);
+	assertContentBounded(text);
 	return text;
 }
 
@@ -92,8 +98,7 @@ test("save failure and thrown errors remain bounded without changing semantics",
 		}, { preserveFullOutput: () => true });
 		const error = await tool.execute("id", { action: "run" }, undefined, undefined, {}).then(() => null, (value) => value);
 		assert.ok(error instanceof Error);
-		assert.ok(Buffer.byteLength(error.message) <= MAX_BYTES);
-		assert.ok(error.message.split("\n").length <= MAX_LINES);
+		assertContentBounded(error.message);
 		assert.match(error.message, /Full output could not be saved to a temporary file/);
 	} finally {
 		if (originalTmpdir === undefined) delete process.env.TMPDIR;
