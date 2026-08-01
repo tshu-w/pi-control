@@ -40,16 +40,11 @@ test("router calls render every argument in function-call form", () => {
 	}
 });
 
-test("command runs retain status and collapse captured output after fifteen lines", () => {
+test("command runs collapse output after fifteen lines", () => {
 	const commands = tools.get("commands");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const notifications = Array.from({ length: 15 }, (_, index) => `  [info] notification ${index + 1}`);
-	const content = [
-		"Command: /example run",
-		"Status: completed",
-		"Notifications:",
-		...notifications,
-	].join("\n");
+	const notifications = Array.from({ length: 16 }, (_, index) => `notification ${index + 1}`);
+	const content = notifications.join("\n");
 	const context = { args: { action: "run" }, isError: false };
 
 	const collapsed = commands.renderResult(
@@ -58,9 +53,9 @@ test("command runs retain status and collapse captured output after fifteen line
 		theme,
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(collapsed, /^Command: \/example run\nStatus: completed/);
-	assert.match(collapsed, /notification 14/);
-	assert.doesNotMatch(collapsed, /notification 15/);
+	assert.match(collapsed, /^notification 1/);
+	assert.match(collapsed, /notification 15/);
+	assert.doesNotMatch(collapsed, /notification 16/);
 	assert.match(collapsed, /\.\.\. \(1 command output line hidden, .*to expand\)$/);
 
 	const notice = "[Output truncated: 100 lines. Full output: /tmp/command.txt]";

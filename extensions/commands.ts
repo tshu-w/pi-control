@@ -164,21 +164,24 @@ function renderResult(
 	capture: Capture,
 	extra: { scheduled?: { op: string; reason?: string }; error?: string } = {},
 ): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
-	const lines: string[] = [];
-	lines.push(`Command: /${command}${args ? " " + args : ""}`);
-	lines.push(`Status: ${status}`);
+	if (status === "completed") {
+		const messages = capture.notifications.map((notification) =>
+			notification.level === "info" ? notification.message : `[${notification.level}] ${notification.message}`,
+		);
+		return {
+			content: [{ type: "text", text: messages.join("\n") || `/${command}${args ? " " + args : ""} completed.` }],
+			details: { status },
+		};
+	}
+
+	const lines = [`/${command}${args ? " " + args : ""}: ${status}`];
 	if (extra.scheduled) {
 		lines.push(`Scheduled transition: ${extra.scheduled.op}`);
 		if (extra.scheduled.reason) lines.push(`  (note: ${extra.scheduled.reason})`);
 	}
 	if (extra.error) lines.push(`Error: ${extra.error}`);
-	if (capture.notifications.length > 0) {
-		lines.push("Notifications:");
-		for (const n of capture.notifications) lines.push(`  [${n.level}] ${n.message}`);
-	}
-	if (capture.statusUpdates.length > 0) {
-		lines.push("Status updates:");
-		for (const s of capture.statusUpdates) lines.push(`  ${s.key} = ${s.text === undefined ? "<cleared>" : s.text}`);
+	for (const notification of capture.notifications) {
+		lines.push(notification.level === "info" ? notification.message : `[${notification.level}] ${notification.message}`);
 	}
 	return {
 		content: [{ type: "text", text: lines.join("\n") }],
@@ -242,16 +245,11 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const lines = text.slice(0, bodyEnd).split("\n");
 				while (lines.at(-1) === "") lines.pop();
-				const captureStart = lines.findIndex((line) => line === "Notifications:" || line === "Status updates:");
-				if (captureStart < 0 || lines.length - captureStart <= 15) {
-					return new Text(theme.fg("toolOutput", text), 0, 0);
-				}
+				if (lines.length <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
 
-				const capturedLines = lines.slice(captureStart);
-				const hidden = capturedLines.length - 15;
+				const hidden = lines.length - 15;
 				const visible = [
-					...lines.slice(0, captureStart).map((line) => theme.fg("toolOutput", line)),
-					...capturedLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+					...lines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
 					"",
 					theme.fg("dim", `... (${hidden} command output ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];

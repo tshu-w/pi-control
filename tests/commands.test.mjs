@@ -41,6 +41,23 @@ function setup(command) {
 	return { tool, ctx: { sessionManager } };
 }
 
+test("completed commands return notifications without wrapper metadata", async () => {
+	const command = {
+		invocationName: "ssh",
+		name: "ssh",
+		description: "Switch SSH mode",
+		sourceInfo: { path: "/tmp/ssh.ts", source: "local", scope: "user" },
+		handler: async (_args, ctx) => {
+			ctx.ui.setStatus("ssh", "SSH: macbook-pro:/Users/wangtianshu");
+			ctx.ui.notify("SSH mode enabled: macbook-pro:/Users/wangtianshu (disable: /ssh off)", "info");
+		},
+	};
+	const { tool, ctx } = setup(command);
+	const result = await tool.execute("ssh-on", { action: "run", name: "ssh", args: "macbook-pro:/Users/wangtianshu" }, undefined, undefined, ctx);
+	assert.equal(result.content[0].text, "SSH mode enabled: macbook-pro:/Users/wangtianshu (disable: /ssh off)");
+	assert.deepEqual(result.details, { status: "completed" });
+});
+
 test("command notifications and rendered output are bounded", async () => {
 	const command = {
 		invocationName: "noisy",
@@ -56,7 +73,7 @@ test("command notifications and rendered output are bounded", async () => {
 	assert.ok(Buffer.byteLength(result.content[0].text) <= MAX_BYTES);
 	assert.equal(result.details.notifications, undefined, "captured output must not be duplicated in details");
 	const fullOutput = readFileSync(result.details.fullOutputPath, "utf8");
-	const notifications = fullOutput.split("\n").filter((line) => line.startsWith("  [info]"));
+	const notifications = fullOutput.split("\n").filter((line) => /^\d+:x/.test(line));
 	assert.equal(notifications.length, 100);
 	assert.ok(notifications.every((line) => line.includes("x".repeat(10_000))), "captured command output must be preserved before spill");
 	rmSync(dirname(result.details.fullOutputPath), { recursive: true, force: true });
