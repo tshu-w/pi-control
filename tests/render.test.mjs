@@ -204,7 +204,7 @@ test("session searches collapse after five complete records", () => {
 		`  preview: "preview ${index + 1}"`,
 	].join("\n"));
 	const notice = "[Output truncated: 100 lines. Narrow the filter or use pagination to continue.]";
-	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\nUse sessions(action='resume', sessionFile=...) to switch.\n\n${notice}`;
+	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]\n\n${notice}`;
 	const result = { content: [{ type: "text", text: content }], details: {} };
 	const context = { args: { action: "search" }, isError: false };
 
@@ -213,14 +213,14 @@ test("session searches collapse after five complete records", () => {
 	assert.match(collapsed, /name="session 5"/);
 	assert.doesNotMatch(collapsed, /name="session 6"/);
 	assert.match(collapsed, /\.\.\. \(1 session hidden, .*to expand\)/);
-	assert.match(collapsed, /Use sessions\(action='resume'/);
+	assert.match(collapsed, /\[Use sessions\(action="resume"/);
 	assert.match(collapsed, /\[Output truncated:/);
 
 	const expanded = sessions.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
 	assert.equal(expanded, content);
 
-	const fiveSessions = `sessions (5 returned)\n\n${records.slice(0, 5).join("\n\n")}\n\nUse sessions(action='resume', sessionFile=...) to switch.`;
+	const fiveSessions = `sessions (5 returned)\n\n${records.slice(0, 5).join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]`;
 	const notCollapsed = sessions.renderResult(
 		{ content: [{ type: "text", text: fiveSessions }], details: {} },
 		{ expanded: false, isPartial: false },

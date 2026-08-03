@@ -137,7 +137,7 @@ test("session search uses labeled records and reusable sessionFile locators", as
 			`  sessionFile: ${JSON.stringify(sessionFile)}`,
 			'  match: "[user] Refactor the authentication module"',
 			"",
-			"Use sessions(action='resume', sessionFile=...) to switch.",
+			'[Use sessions(action="resume", sessionFile=...) to switch.]',
 		].join("\n"));
 		assert.equal(result.details.results[0].sessionFile, sessionFile);
 		assert.equal("file" in result.details.results[0], false);

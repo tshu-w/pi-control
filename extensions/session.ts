@@ -67,7 +67,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			const hidden = records.length - 5;
 			visible.push(theme.fg("dim", `... (${hidden} session${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`));
 			const footerSections = sections.filter((section) =>
-				section.startsWith("Use sessions(") || section.startsWith("[Output truncated:"),
+				section.startsWith("[Use sessions(") || section.startsWith("[Output truncated:"),
 			);
 			visible.push(...footerSections.map((section) => theme.fg("toolOutput", section)));
 			return new Text(visible.join("\n\n"), 0, 0);
@@ -136,7 +136,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					});
 
 					return {
-						content: [{ type: "text", text: `sessions (${results.length} returned)\n\n${records.join("\n\n")}\n\nUse sessions(action='resume', sessionFile=...) to switch.` }],
+						content: [{ type: "text", text: `sessions (${results.length} returned)\n\n${records.join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]` }],
 						details: {
 							results: results.map(({ file, sessionId, timestamp, name, cwd }) => ({ sessionFile: file, sessionId, timestamp, name, cwd })),
 							scope,
