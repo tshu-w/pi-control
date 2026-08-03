@@ -15,7 +15,9 @@
  *
  *   2. ui.notify / ui.setStatus are captured into the tool result so the LLM
  *      can see what the command actually did. Without this the model would
- *      see an empty result for commands like /ssh which only notify.
+ *      see an empty result for commands like /ssh which only notify. Captured
+ *      notifications are not also forwarded to the UI, which would display
+ *      the same message twice alongside the tool result.
  *
  *   3. ui.select / ui.confirm / ui.input throw InteractiveUIUnavailable when
  *      !ctx.hasUI. We do NOT fall through to noOpUIContext: a noop return
@@ -101,10 +103,6 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	mediatedUI.notify = (message: string, type: "info" | "warning" | "error" = "info") => {
 		if (capture.notifications.length < MAX_CAPTURE_ITEMS) {
 			capture.notifications.push({ level: type, message: String(message) });
-		}
-		// Also forward to real UI if present — users still want to see it.
-		if (hasUI && typeof ctx.ui?.notify === "function") {
-			try { ctx.ui.notify(message, type); } catch { /* best-effort */ }
 		}
 	};
 	mediatedUI.setStatus = (key: string, text: string | undefined) => {

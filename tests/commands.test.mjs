@@ -12,12 +12,13 @@ const MAX_BYTES = 50 * 1024;
 
 function setup(command) {
 	const sessionManager = {};
+	const forwarded = { notifications: [], statusUpdates: [] };
 	const commandContext = {
-		hasUI: false,
+		hasUI: true,
 		sessionManager,
 		ui: {
-			notify() {},
-			setStatus() {},
+			notify(message, type) { forwarded.notifications.push({ message, type }); },
+			setStatus(key, text) { forwarded.statusUpdates.push({ key, text }); },
 		},
 	};
 	const runner = {
@@ -38,10 +39,10 @@ function setup(command) {
 	ExtensionRunner.prototype.bindCommandContext.call(runner, actions);
 	let tool;
 	registerCommandsRouter({ registerTool(value) { tool = value; } });
-	return { tool, ctx: { sessionManager } };
+	return { tool, ctx: { sessionManager }, forwarded };
 }
 
-test("completed commands return notifications without wrapper metadata", async () => {
+test("completed commands return notifications once and preserve status updates", async () => {
 	const command = {
 		invocationName: "ssh",
 		name: "ssh",
@@ -52,10 +53,12 @@ test("completed commands return notifications without wrapper metadata", async (
 			ctx.ui.notify("SSH mode enabled: macbook-pro:/Users/wangtianshu (disable: /ssh off)", "info");
 		},
 	};
-	const { tool, ctx } = setup(command);
+	const { tool, ctx, forwarded } = setup(command);
 	const result = await tool.execute("ssh-on", { action: "run", name: "ssh", args: "macbook-pro:/Users/wangtianshu" }, undefined, undefined, ctx);
 	assert.equal(result.content[0].text, "SSH mode enabled: macbook-pro:/Users/wangtianshu (disable: /ssh off)");
 	assert.deepEqual(result.details, { status: "completed" });
+	assert.deepEqual(forwarded.notifications, []);
+	assert.deepEqual(forwarded.statusUpdates, [{ key: "ssh", text: "SSH: macbook-pro:/Users/wangtianshu" }]);
 });
 
 test("command notifications and rendered output are bounded", async () => {
