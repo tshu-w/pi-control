@@ -24,12 +24,12 @@
  *      could trick handlers into "user cancelled" branches that perform half
  *      a cleanup before throwing.
  *
- * Result statuses surfaced to the model:
- *   - completed              — handler returned normally
- *   - scheduled_transition   — handler scheduled a session transition (deferred)
- *   - interactive_unavailable — handler needed UI we cannot provide
- *   - busy                   — another deferred action is already queued
- *   - failed                 — handler threw
+ * Successful result statuses surfaced to the model:
+ *   - completed            — handler returned normally
+ *   - scheduled_transition — handler scheduled a session transition (deferred)
+ *
+ * Missing capabilities, invalid requests, scheduling conflicts, and handler
+ * failures throw tool errors so Pi and custom renderers display them as errors.
  *
  * What we deliberately do NOT do in v1:
  *   - timeout-as-cancel (Promise.race does not actually cancel)
@@ -67,6 +67,7 @@ interface Capture {
 interface MediatedContext {
 	ctx: any;
 	clearOwnPendingRawOp(): boolean;
+	getTransitionRequest(): DeferredTransitionRequested | null;
 }
 
 /**
@@ -82,21 +83,25 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	const ops = getOps(ctx);
 	const hasUI: boolean = !!ctx?.hasUI;
 	let rawOpToken: symbol | null = null;
+	let transitionRequest: DeferredTransitionRequested | null = null;
 
 	const scheduleTransition = (op: string, runner: () => Promise<{ cancelled?: boolean } | void>): never => {
 		// `ops` should be non-null when we're here (the patch is what wired ctx in
 		// the first place), but be defensive: report through the sentinel path.
 		if (!ops) {
-			throw new DeferredTransitionRequested(op, "command ops unavailable");
+			transitionRequest = new DeferredTransitionRequested(op, "command ops unavailable");
+			throw transitionRequest;
 		}
 		const result = scheduleRawOp(ctx, op, runner);
 		if (!result.ok) {
-			throw new DeferredTransitionRequested(op, result.reason);
+			transitionRequest = new DeferredTransitionRequested(op, result.reason);
+			throw transitionRequest;
 		}
 		rawOpToken = result.token;
 		// Synchronous throw is intentional: even handlers that forget to `await`
 		// ctx.newSession()/fork()/... must stop immediately.
-		throw new DeferredTransitionRequested(op);
+		transitionRequest = new DeferredTransitionRequested(op);
+		throw transitionRequest;
 	};
 
 	const mediatedUI = Object.create(ctx.ui ?? null);
@@ -152,6 +157,7 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	return {
 		ctx: mediated,
 		clearOwnPendingRawOp: () => rawOpToken !== null && clearPendingRawOp(ctx, rawOpToken),
+		getTransitionRequest: () => transitionRequest,
 	};
 }
 
@@ -190,6 +196,10 @@ function renderResult(
 	};
 }
 
+function throwCommandResult(result: ReturnType<typeof renderResult>): never {
+	throw new Error(result.content[0]?.text ?? "Command failed.");
+}
+
 export function registerCommandsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
 		name: "commands",
@@ -205,7 +215,6 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			"Use commands(action='list') to discover what slash commands the user's extensions registered.",
 			"Use commands(action='run', name, args?) to invoke one. Args is a single string passed verbatim to the handler (the same way `/cmd args...` would).",
 			"If status='scheduled_transition', the handler asked to switch session/fork/reload; it will happen after this turn.",
-			"If status='interactive_unavailable', the command needs a TTY and cannot run from a tool call.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "run"] as const, { description: "Action to perform" }),
@@ -260,10 +269,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const runner = getRunner(ctx);
 			if (!runner) {
-				return {
-					content: [{ type: "text", text: "Commands router unavailable: ExtensionRunner not captured (pi-control patch inactive)." }],
-					details: { status: "unavailable", error: "runner-unavailable" },
-				};
+				throw new Error("Commands router unavailable: ExtensionRunner not captured (pi-control patch inactive).");
 			}
 
 			switch (params.action) {
@@ -311,17 +317,11 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					const name = (params.name ?? "").trim();
 					const args = params.args ?? "";
 					if (!name) {
-						return {
-							content: [{ type: "text", text: "Missing required parameter: name." }],
-							details: { error: "missing-name" },
-						};
+						throw new Error("Missing required parameter: name.");
 					}
 					const cmd = runner.getCommand(name);
 					if (!cmd) {
-						return {
-							content: [{ type: "text", text: `No command named "${name}". Use commands(action="list") to see available commands.` }],
-							details: { error: "not-found" },
-						};
+						throw new Error(`No command named "${name}". Use commands(action="list") to see available commands.`);
 					}
 
 					const realCtx = runner.createCommandContext();
@@ -335,19 +335,20 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						// resumed normally. Letting its queued transition fire on agent_settled
 						// would surprise the model, so cancel only the rawOp scheduled by
 						// this command run (never another router's pending action).
-						if (mediated.clearOwnPendingRawOp()) {
-							capture.notifications.push({
-								level: "warning",
-								message: "Handler swallowed a scheduled session transition; transition cancelled.",
-							});
+						const swallowedTransition = mediated.getTransitionRequest();
+						if (swallowedTransition) {
+							if (mediated.clearOwnPendingRawOp()) {
+								throw new Error("Handler swallowed a scheduled session transition; transition cancelled.");
+							}
+							throw swallowedTransition;
 						}
 						return renderResult("completed", name, args, capture);
 					} catch (e) {
 						if (e instanceof DeferredTransitionRequested) {
 							if (e.schedulingError) {
-								return renderResult("busy", name, args, capture, {
+								throwCommandResult(renderResult("busy", name, args, capture, {
 									scheduled: { op: e.op, reason: e.schedulingError },
-								});
+								}));
 							}
 							return renderResult("scheduled_transition", name, args, capture, {
 								scheduled: { op: e.op },
@@ -362,18 +363,18 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 							});
 						}
 						if (e instanceof InteractiveUIUnavailable) {
-							return renderResult("interactive_unavailable", name, args, capture, {
+							throwCommandResult(renderResult("interactive_unavailable", name, args, capture, {
 								error: e.message,
-							});
+							}));
 						}
-						return renderResult("failed", name, args, capture, {
+						throwCommandResult(renderResult("failed", name, args, capture, {
 							error: e instanceof Error ? `${e.message}` : String(e),
-						});
+						}));
 					}
 				}
 			}
 
-			return { content: [{ type: "text", text: `Unknown action: ${params.action}` }], details: {} };
+			throw new Error(`Unknown action: ${params.action}`);
 		},
 	}, {
 		preserveFullOutput: (params) => params.action === "run",

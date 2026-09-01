@@ -36,6 +36,7 @@ function register(registerRouter, overrides = {}) {
 	let tool;
 	const pi = {
 		registerTool(value) { tool = value; },
+		on() {},
 		getThinkingLevel() { return "off"; },
 		setSessionName() {},
 		setLabel() {},

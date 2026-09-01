@@ -9,7 +9,7 @@ const { registerModelsRouter } = await jiti.import("../extensions/model.ts");
 const { registerCommandsRouter } = await jiti.import("../extensions/commands.ts");
 
 const tools = new Map();
-const pi = { registerTool: (tool) => tools.set(tool.name, tool) };
+const pi = { registerTool: (tool) => tools.set(tool.name, tool), on() {} };
 registerSessionsRouter(pi);
 registerTreeRouter(pi);
 registerModelsRouter(pi);

@@ -1,4 +1,5 @@
-import { complete, getModel, StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, type Usage } from "@earendil-works/pi-ai";
+import { complete, getModel } from "@earendil-works/pi-ai/compat";
 import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -77,6 +78,15 @@ async function resolveModel(
 }
 
 export function registerModelsRouter(pi: ExtensionAPI) {
+	const pendingErrorUsage = new Map<string, Usage>();
+	pi.on("tool_result", (event) => {
+		if (event.toolName !== "models") return;
+		const usage = pendingErrorUsage.get(event.toolCallId);
+		if (usage === undefined) return;
+		pendingErrorUsage.delete(event.toolCallId);
+		return { usage };
+	});
+
 	pi.registerTool(withToolOutputContract({
 		name: "models",
 		label: "Models",
@@ -158,7 +168,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 
 			return new Text(theme.fg("toolOutput", text), 0, 0);
 		},
-		async execute(_id, params, signal, onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			switch (params.action) {
 				// ── list ─────────────────────────────────────────────
 				case "list": {
@@ -278,7 +288,12 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					);
 
 					if (response.stopReason === "aborted") {
-						return { content: [{ type: "text", text: "Consultation aborted." }], details: {}, usage: response.usage };
+						pendingErrorUsage.set(toolCallId, response.usage);
+						throw new Error("Consultation aborted.");
+					}
+					if (response.stopReason === "error") {
+						pendingErrorUsage.set(toolCallId, response.usage);
+						throw new Error(response.errorMessage ?? "Consultation failed.");
 					}
 
 					const text = response.content
