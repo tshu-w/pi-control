@@ -6,7 +6,7 @@ import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 import { renderToolCall } from "./render-call.js";
-import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
+import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
 
@@ -75,8 +75,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
-			const details = result.details as { shown?: number; matches?: number; truncated?: boolean } | undefined;
-			const truncated = details?.truncated === true;
+			const details = result.details as { shown?: number; matches?: number } | undefined;
+			const truncated = isOutputTruncated(result.details);
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
 			if (expanded) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 			if (context.args.action === "list" && context.args.scope === "all") {

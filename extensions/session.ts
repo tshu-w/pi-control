@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import { clampLimit, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
-import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
+import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
@@ -53,7 +53,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
-			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
+			const truncated = isOutputTruncated(result.details);
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
 			if (expanded || context.args.action !== "search") {
 				return new Text(styleToolOutput(text, truncated, theme), 0, 0);

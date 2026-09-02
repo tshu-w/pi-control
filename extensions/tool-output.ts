@@ -1,9 +1,15 @@
-import type { AgentToolResult, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, Theme, ToolDefinition, TruncationResult } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TSchema } from "typebox";
+
+export function isOutputTruncated(details: unknown): boolean {
+	if (!details || typeof details !== "object") return false;
+	const value = details as { truncation?: { truncated?: boolean } };
+	return value.truncation?.truncated === true;
+}
 
 export function styleToolOutput(text: string, truncated: boolean, theme: Theme): string {
 	if (!truncated) return theme.fg("toolOutput", text);
@@ -30,12 +36,12 @@ function utf8Prefix(value: string, maxBytes: number): string {
 
 async function boundText(value: string, preserve: boolean, tempPrefix: string): Promise<{
 	text: string;
-	truncated: boolean;
+	truncation?: TruncationResult;
 	fullOutputSaved?: boolean;
 	fullOutputPath?: string;
 }> {
 	const full = truncateHead(value, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
-	if (!full.truncated) return { text: value, truncated: false };
+	if (!full.truncated) return { text: value };
 
 	let fullOutputPath: string | undefined;
 	if (preserve) {
@@ -59,7 +65,7 @@ async function boundText(value: string, preserve: boolean, tempPrefix: string): 
 	if (!content) content = utf8Prefix(value.split("\n")[0] ?? "", DEFAULT_MAX_BYTES);
 	return {
 		text: content + notice,
-		truncated: true,
+		truncation: full,
 		...(preserve ? { fullOutputSaved: fullOutputPath !== undefined } : {}),
 		...(fullOutputPath ? { fullOutputPath } : {}),
 	};
@@ -75,7 +81,7 @@ async function boundResult<TDetails>(
 		.map((part) => part.text)
 		.join("\n");
 	const bounded = await boundText(text, preserve, tempPrefix);
-	if (!bounded.truncated) return result;
+	if (!bounded.truncation) return result;
 
 	const nonText = result.content.filter((part) => part.type !== "text");
 	const details = result.details && typeof result.details === "object"
@@ -86,7 +92,7 @@ async function boundResult<TDetails>(
 		content: [{ type: "text", text: bounded.text }, ...nonText],
 		details: {
 			...details,
-			truncated: true,
+			truncation: bounded.truncation,
 			...(bounded.fullOutputSaved !== undefined ? { fullOutputSaved: bounded.fullOutputSaved } : {}),
 			...(bounded.fullOutputPath ? { fullOutputPath: bounded.fullOutputPath } : {}),
 		} as TDetails,

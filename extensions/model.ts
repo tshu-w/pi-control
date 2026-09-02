@@ -5,7 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderToolCall } from "./render-call.js";
 import { scheduleDeferred } from "./command-actions.js";
-import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
+import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -124,7 +124,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
-			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
+			const truncated = isOutputTruncated(result.details);
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
 			if (expanded || isPartial) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 

@@ -65,6 +65,8 @@ test("output wrapper enforces aggregate bounds and preserves expensive results",
 	const text = assertBounded(result);
 	assert.match(text, /Output truncated/);
 	assert.equal(result.details.state, "keep");
+	assert.equal(result.details.truncation.truncated, true);
+	assert.equal(result.details.truncation.totalBytes, Buffer.byteLength(full));
 	assert.equal(result.details.fullOutputSaved, true);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8"), full);
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
@@ -83,6 +85,7 @@ test("safe rerunnable results truncate without creating files", async () => {
 	const result = await tool.execute("id", {}, undefined, undefined, {});
 	const text = assertBounded(result);
 	assert.match(text, /Narrow the filter or use pagination/);
+	assert.equal(result.details.truncation.truncated, true);
 	assert.equal(result.details.fullOutputPath, undefined);
 });
 
@@ -391,7 +394,8 @@ test("executed commands preserve full output without duplicating captured text i
 	const commands = register(registerCommandsRouter);
 	const result = await commands.execute("id", { action: "run", name: "loud", args: "" }, undefined, undefined, { sessionManager });
 	assertBounded(result);
-	assert.deepEqual(Object.keys(result.details).sort(), ["fullOutputPath", "fullOutputSaved", "status", "truncated"]);
+	assert.deepEqual(Object.keys(result.details).sort(), ["fullOutputPath", "fullOutputSaved", "status", "truncation"]);
+	assert.equal(result.details.truncation.truncated, true);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8").includes("n".repeat(1000)), true);
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
 });

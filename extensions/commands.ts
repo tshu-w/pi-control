@@ -43,7 +43,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
-import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
+import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 class DeferredTransitionRequested extends Error {
 	constructor(public op: string, public schedulingError?: string) {
@@ -227,7 +227,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
-			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
+			const truncated = isOutputTruncated(result.details);
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
 			if (expanded) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 

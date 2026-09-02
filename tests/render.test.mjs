@@ -60,7 +60,7 @@ test("command runs collapse output after fifteen lines", () => {
 
 	const notice = "[Output truncated: 100 lines. Full output: /tmp/command.txt]";
 	const truncated = commands.renderResult(
-		{ content: [{ type: "text", text: `${content}\n\n${notice}` }], details: { truncated: true } },
+		{ content: [{ type: "text", text: `${content}\n\n${notice}` }], details: { truncation: { truncated: true } } },
 		{ expanded: false, isPartial: false },
 		theme,
 		context,
@@ -110,7 +110,7 @@ test("model consultations collapse after fifteen response lines", () => {
 	const notice = "[Output truncated: 100 lines. Full output: /tmp/consult.txt]";
 	const truncatedContent = `${content}\n\n${notice}`;
 	const truncated = models.renderResult(
-		{ content: [{ type: "text", text: truncatedContent }], details: { truncated: true } },
+		{ content: [{ type: "text", text: truncatedContent }], details: { truncation: { truncated: true } } },
 		{ expanded: false, isPartial: false },
 		theme,
 		context,
@@ -210,7 +210,7 @@ test("hard truncation notices use warning while continuation hints stay subdued"
 	]) {
 		const body = name === "commands" ? "[Output truncated: user content]\nbody" : "body";
 		tools.get(name).renderResult(
-			{ content: [{ type: "text", text: `${body}\n\n${notice}` }], details: { truncated: true } },
+			{ content: [{ type: "text", text: `${body}\n\n${notice}` }], details: { truncation: { truncated: true } } },
 			{ expanded: true, isPartial: false },
 			theme,
 			{ args, isError: false },
@@ -221,7 +221,7 @@ test("hard truncation notices use warning while continuation hints stay subdued"
 	styles.length = 0;
 	const retainedEntries = Array.from({ length: 16 }, (_, index) => `[entry-${index + 1}] user: preview`);
 	tools.get("tree").renderResult(
-		{ content: [{ type: "text", text: `entries\n${retainedEntries.join("\n")}\n\n${notice}` }], details: { shown: 100, truncated: true } },
+		{ content: [{ type: "text", text: `entries\n${retainedEntries.join("\n")}\n\n${notice}` }], details: { shown: 100, truncation: { truncated: true } } },
 		{ expanded: false, isPartial: false },
 		theme,
 		{ args: { action: "list", scope: "branch" }, isError: false },
