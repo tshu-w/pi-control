@@ -6,7 +6,7 @@ import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 import { renderToolCall } from "./render-call.js";
-import { withToolOutputContract } from "./tool-output.js";
+import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
 
@@ -75,13 +75,13 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			const details = result.details as { shown?: number; matches?: number; truncated?: boolean } | undefined;
+			const truncated = details?.truncated === true;
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
-			if (expanded) return new Text(theme.fg("toolOutput", text), 0, 0);
-
-			const details = result.details as { shown?: number; matches?: number } | undefined;
+			if (expanded) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 			if (context.args.action === "list" && context.args.scope === "all") {
 				if (details?.shown === undefined || details.shown <= 5) {
-					return new Text(theme.fg("toolOutput", text), 0, 0);
+					return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 				}
 				const lines = text.split("\n");
 				const groups: string[][] = [];
@@ -98,7 +98,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					}
 				}
 				if (currentGroup) groups.push(currentGroup);
-				if (groups.length <= 5) return new Text(theme.fg("toolOutput", text), 0, 0);
+				if (groups.length <= 5) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const hidden = groups.length - 5;
 				const visible = [
@@ -108,7 +108,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					"",
 					theme.fg("dim", `... (${hidden} fork point${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 				return new Text(visible.join("\n"), 0, 0);
 			}
 
@@ -120,14 +120,18 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			} else if (context.args.action === "labels") {
 				shown = details?.shown;
 			} else {
-				return new Text(theme.fg("toolOutput", text), 0, 0);
+				return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 			}
-			if (shown === undefined || shown <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
+			if (shown === undefined) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			const lines = text.split("\n");
-			const itemLines = lines.slice(1, shown + 1);
-			const footerLines = lines.slice(shown + 1).filter(Boolean);
-			const hidden = shown - 15;
+			const hardFooterIndex = truncated ? lines.findIndex((line) => line.startsWith("[Output truncated:")) : -1;
+			const retainedLines = lines.slice(1, hardFooterIndex >= 0 ? hardFooterIndex : undefined).filter(Boolean);
+			const actualShown = hardFooterIndex >= 0 ? retainedLines.length : shown;
+			if (actualShown <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
+			const itemLines = hardFooterIndex >= 0 ? retainedLines : lines.slice(1, shown + 1);
+			const footerLines = hardFooterIndex >= 0 ? lines.slice(hardFooterIndex) : lines.slice(shown + 1).filter(Boolean);
+			const hidden = actualShown - 15;
 			const itemLabel = context.args.action === "labels" ? "label" : "entry";
 			const visible = [
 				theme.fg("toolOutput", lines[0]!),
@@ -135,7 +139,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				"",
 				theme.fg("dim", `... (${hidden} ${itemLabel}${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
 			];
-			if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+			if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 			return new Text(visible.join("\n"), 0, 0);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {

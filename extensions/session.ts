@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import { clampLimit, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
-import { withToolOutputContract } from "./tool-output.js";
+import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
@@ -53,14 +53,15 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
 			if (expanded || context.args.action !== "search") {
-				return new Text(theme.fg("toolOutput", text), 0, 0);
+				return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 			}
 
 			const sections = text.split("\n\n");
 			const records = sections.filter((section) => section.startsWith("- name="));
-			if (records.length <= 5) return new Text(theme.fg("toolOutput", text), 0, 0);
+			if (records.length <= 5) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			const visible = [sections[0]!, ...records.slice(0, 5)]
 				.map((section) => theme.fg("toolOutput", section));
@@ -69,7 +70,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			const footerSections = sections.filter((section) =>
 				section.startsWith("[Use sessions(") || section.startsWith("[Output truncated:"),
 			);
-			visible.push(...footerSections.map((section) => theme.fg("toolOutput", section)));
+			visible.push(...footerSections.map((section) => styleToolOutput(section, truncated, theme)));
 			return new Text(visible.join("\n\n"), 0, 0);
 		},
 		async execute(_id, params, signal, _onUpdate, ctx) {

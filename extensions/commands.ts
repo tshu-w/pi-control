@@ -43,7 +43,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 import { renderToolCall } from "./render-call.js";
-import { withToolOutputContract } from "./tool-output.js";
+import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 class DeferredTransitionRequested extends Error {
 	constructor(public op: string, public schedulingError?: string) {
@@ -227,13 +227,14 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
-			if (expanded) return new Text(theme.fg("toolOutput", text), 0, 0);
+			if (expanded) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			if (context.args.action === "list") {
 				const lines = text.split("\n");
 				const commandLines = lines.filter((line) => line.startsWith("/"));
-				if (commandLines.length <= 20) return new Text(theme.fg("toolOutput", text), 0, 0);
+				if (commandLines.length <= 20) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const footerLines = lines.slice(lines.lastIndexOf(commandLines.at(-1)!) + 1).filter(Boolean);
 				const hidden = commandLines.length - 20;
@@ -242,17 +243,16 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					"",
 					theme.fg("dim", `... (${hidden} command${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 				return new Text(visible.join("\n"), 0, 0);
 			}
 
 			if (context.args.action === "run") {
-				const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated;
 				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const lines = text.slice(0, bodyEnd).split("\n");
 				while (lines.at(-1) === "") lines.pop();
-				if (lines.length <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
+				if (lines.length <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const hidden = lines.length - 15;
 				const visible = [
@@ -260,11 +260,11 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					"",
 					theme.fg("dim", `... (${hidden} command output ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];
-				if (footerStart >= 0) visible.push("", theme.fg("toolOutput", text.slice(footerStart + 2)));
+				if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
 				return new Text(visible.join("\n"), 0, 0);
 			}
 
-			return new Text(theme.fg("toolOutput", text), 0, 0);
+			return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const runner = getRunner(ctx);

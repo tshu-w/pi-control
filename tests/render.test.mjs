@@ -195,6 +195,50 @@ test("linear tree results collapse after fifteen entries and retain continuation
 	assert.equal(expanded, content);
 });
 
+test("hard truncation notices use warning while continuation hints stay subdued", () => {
+	const styles = [];
+	const theme = {
+		bold: (text) => text,
+		fg: (color, text) => { styles.push([color, text]); return text; },
+	};
+	const notice = "[Output truncated: 100 lines. Full output: /tmp/output.txt]";
+	for (const [name, args] of [
+		["commands", { action: "run" }],
+		["models", { action: "consult" }],
+		["sessions", { action: "search" }],
+		["tree", { action: "search" }],
+	]) {
+		const body = name === "commands" ? "[Output truncated: user content]\nbody" : "body";
+		tools.get(name).renderResult(
+			{ content: [{ type: "text", text: `${body}\n\n${notice}` }], details: { truncated: true } },
+			{ expanded: true, isPartial: false },
+			theme,
+			{ args, isError: false },
+		).render(1000);
+	}
+	assert.equal(styles.filter(([color, text]) => color === "warning" && text === notice).length, 4);
+
+	styles.length = 0;
+	const retainedEntries = Array.from({ length: 16 }, (_, index) => `[entry-${index + 1}] user: preview`);
+	tools.get("tree").renderResult(
+		{ content: [{ type: "text", text: `entries\n${retainedEntries.join("\n")}\n\n${notice}` }], details: { shown: 100, truncated: true } },
+		{ expanded: false, isPartial: false },
+		theme,
+		{ args: { action: "list", scope: "branch" }, isError: false },
+	).render(1000);
+	assert.ok(styles.some(([color, text]) => color === "warning" && text === notice), "collapsed tree retains the hard truncation warning");
+
+	styles.length = 0;
+	const continuation = "[12 more entries. Use offset=5 to continue.]";
+	tools.get("tree").renderResult(
+		{ content: [{ type: "text", text: continuation }], details: {} },
+		{ expanded: true, isPartial: false },
+		theme,
+		{ args: { action: "list" }, isError: false },
+	).render(1000);
+	assert.equal(styles.some(([color]) => color === "warning"), false);
+});
+
 test("session searches collapse after five complete records", () => {
 	const sessions = tools.get("sessions");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };

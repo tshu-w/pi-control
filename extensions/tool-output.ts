@@ -1,9 +1,19 @@
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TSchema } from "typebox";
+
+export function styleToolOutput(text: string, truncated: boolean, theme: Theme): string {
+	if (!truncated) return theme.fg("toolOutput", text);
+	const marker = "[Output truncated:";
+	const separatedFooterStart = text.lastIndexOf(`\n\n${marker}`);
+	const footerStart = separatedFooterStart >= 0 ? separatedFooterStart : text.startsWith(marker) ? 0 : -1;
+	if (footerStart < 0) return theme.fg("toolOutput", text);
+	if (footerStart === 0) return theme.fg("warning", text);
+	return `${theme.fg("toolOutput", text.slice(0, footerStart))}\n\n${theme.fg("warning", text.slice(footerStart + 2))}`;
+}
 
 interface OutputContractOptions<TParams> {
 	preserveFullOutput?: (params: TParams) => boolean;

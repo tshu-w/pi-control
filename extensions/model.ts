@@ -5,7 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderToolCall } from "./render-call.js";
 import { scheduleDeferred } from "./command-actions.js";
-import { withToolOutputContract } from "./tool-output.js";
+import { styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -124,13 +124,14 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			const text = result.content.find((part) => part.type === "text")?.text ?? "";
+			const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated === true;
 			if (context.isError) return new Text(theme.fg("error", text), 0, 0);
-			if (expanded || isPartial) return new Text(theme.fg("toolOutput", text), 0, 0);
+			if (expanded || isPartial) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			if (context.args.action === "list") {
 				const lines = text.split("\n");
 				const modelLines = lines.filter((line) => line.startsWith("- "));
-				if (modelLines.length <= 20) return new Text(theme.fg("toolOutput", text), 0, 0);
+				if (modelLines.length <= 20) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const footerLines = lines.slice(lines.lastIndexOf(modelLines.at(-1)!) + 1).filter(Boolean);
 				const hidden = modelLines.length - 20;
@@ -140,19 +141,18 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					"",
 					theme.fg("dim", `... (${hidden} model${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => theme.fg("toolOutput", line)));
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 				return new Text(visible.join("\n"), 0, 0);
 			}
 
 			if (context.args.action === "consult") {
 				const separator = text.indexOf("\n\n");
 				if (separator < 0) return new Text(theme.fg("toolOutput", text), 0, 0);
-				const truncated = (result.details as { truncated?: boolean } | undefined)?.truncated;
 				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const responseLines = text.slice(separator + 2, bodyEnd).split("\n");
 				while (responseLines.at(-1) === "") responseLines.pop();
-				if (responseLines.length <= 15) return new Text(theme.fg("toolOutput", text), 0, 0);
+				if (responseLines.length <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const hidden = responseLines.length - 15;
 				const visible = [
@@ -162,11 +162,11 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					"",
 					theme.fg("dim", `... (${hidden} response ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
 				];
-				if (footerStart >= 0) visible.push("", theme.fg("toolOutput", text.slice(footerStart + 2)));
+				if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
 				return new Text(visible.join("\n"), 0, 0);
 			}
 
-			return new Text(theme.fg("toolOutput", text), 0, 0);
+			return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			switch (params.action) {
