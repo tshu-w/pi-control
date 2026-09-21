@@ -58,9 +58,9 @@ test("upstream message APIs keep their awaited/void shapes", () => {
 	// ExtensionAPI.sendUserMessage is fire-and-forget (returns void): several
 	// routers document asynchronous delivery because of this. If it becomes
 	// awaitable, upgrade queue_message/nav/compact/reload/model-handoff delivery.
-	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";\s*\}\): void;/, "ExtensionAPI.sendUserMessage is no longer void \u2014 upgrade to awaited delivery");
+	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";[^}]*\}\): void;/, "ExtensionAPI.sendUserMessage is no longer void \u2014 upgrade to awaited delivery");
 	// resume/new/fork followUp delivery awaits the replaced-session context API.
-	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";\s*\}\): Promise<void>;/, "ReplacedSessionContext.sendUserMessage no longer returns a Promise");
+	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";[^}]*\}\): Promise<void>;/, "ReplacedSessionContext.sendUserMessage no longer returns a Promise");
 });
 
 test("original bindCommandContext behavior is preserved (handlers land on the runner)", () => {
