@@ -13,74 +13,59 @@ export function isOutputTruncated(details: unknown): boolean {
 
 export function styleToolOutput(text: string, truncated: boolean, theme: Theme): string {
 	if (!truncated) return theme.fg("toolOutput", text);
-	const marker = "[Output truncated:";
-	const separatedFooterStart = text.lastIndexOf(`\n\n${marker}`);
-	const footerStart = separatedFooterStart >= 0 ? separatedFooterStart : text.startsWith(marker) ? 0 : -1;
+	const separatedFooterStart = Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line "));
+	const footerStart = separatedFooterStart >= 0 ? separatedFooterStart : /^(?:\[Output truncated:|\[Showing |\[Line )/.test(text) ? 0 : -1;
 	if (footerStart < 0) return theme.fg("toolOutput", text);
-	if (footerStart === 0) return theme.fg("warning", text);
-	return `${theme.fg("toolOutput", text.slice(0, footerStart))}\n\n${theme.fg("warning", text.slice(footerStart + 2))}`;
+	const noticeStart = separatedFooterStart >= 0 ? separatedFooterStart + 2 : footerStart;
+	const nextLine = text.indexOf("\n", noticeStart);
+	const noticeEnd = nextLine >= 0 ? nextLine : text.length;
+	return theme.fg("toolOutput", text.slice(0, noticeStart))
+		+ theme.fg("warning", text.slice(noticeStart, noticeEnd))
+		+ theme.fg("toolOutput", text.slice(noticeEnd));
 }
 
-interface OutputContractOptions<TParams> {
-	preserveFullOutput?: (params: TParams) => boolean;
+interface OutputContractOptions {
 	tempPrefix?: string;
 }
 
-function utf8Prefix(value: string, maxBytes: number): string {
-	const buffer = Buffer.from(value, "utf8");
-	if (buffer.length <= maxBytes) return value;
-	let end = maxBytes;
-	while (end > 0 && (buffer[end] & 0b1100_0000) === 0b1000_0000) end--;
-	return buffer.subarray(0, end).toString("utf8");
-}
-
-async function boundText(value: string, preserve: boolean, tempPrefix: string): Promise<{
+async function boundText(value: string, tempPrefix: string): Promise<{
 	text: string;
 	truncation?: TruncationResult;
-	fullOutputSaved?: boolean;
 	fullOutputPath?: string;
 }> {
 	const full = truncateHead(value, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
 	if (!full.truncated) return { text: value };
 
-	let fullOutputPath: string | undefined;
-	if (preserve) {
-		try {
-			const directory = await mkdtemp(join(tmpdir(), `${tempPrefix}-`));
-			fullOutputPath = join(directory, "output.txt");
-			await writeFile(fullOutputPath, value, "utf8");
-		} catch {
-			fullOutputPath = undefined;
-		}
-	}
+	const directory = await mkdtemp(join(tmpdir(), `${tempPrefix}-`));
+	const fullOutputPath = join(directory, "output.txt");
+	await writeFile(fullOutputPath, value, "utf8");
 
-	const summary = `Output truncated: ${formatSize(full.totalBytes)}, ${full.totalLines} lines total.`;
-	const notice = fullOutputPath
-		? `\n\n[${summary} Full output: ${fullOutputPath}. This is a temporary file; copy or move it if it should persist.]`
-		: preserve
-			? `\n\n[${summary} Full output could not be saved to a temporary file.]`
-			: `\n\n[${summary} Narrow the filter or use pagination to continue.]`;
 	// The limits bound the content; the notice sits on top of it.
-	let content = full.content;
-	if (!content) content = utf8Prefix(value.split("\n")[0] ?? "", DEFAULT_MAX_BYTES);
+	const summary = full.firstLineExceedsLimit
+		? `Line 1 is ${formatSize(Buffer.byteLength(value.split("\n")[0]!, "utf8"))}, exceeds ${formatSize(full.maxBytes)} limit.`
+		: `Showing lines 1-${full.outputLines} of ${full.totalLines}${full.truncatedBy === "bytes" ? ` (${formatSize(full.maxBytes)} limit)` : ""}.`;
+	const notice = `\n\n[${summary} Full output: ${fullOutputPath}]`;
+	const continuation = value.match(/\[\d{1,16} (?:more (?:results|labels|fork points)|older (?:entry|entries))\. Use offset=\d{1,16} to continue\.\]$/);
+	const nextPage = continuation && continuation.index! + continuation[0].length > full.content.length
+		? `\n\n${continuation[0]}`
+		: "";
+
 	return {
-		text: content + notice,
+		text: full.content + notice + nextPage,
 		truncation: full,
-		...(preserve ? { fullOutputSaved: fullOutputPath !== undefined } : {}),
-		...(fullOutputPath ? { fullOutputPath } : {}),
+		fullOutputPath,
 	};
 }
 
 async function boundResult<TDetails>(
 	result: AgentToolResult<TDetails>,
-	preserve: boolean,
 	tempPrefix: string,
 ): Promise<AgentToolResult<TDetails>> {
 	const text = result.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text)
 		.join("\n");
-	const bounded = await boundText(text, preserve, tempPrefix);
+	const bounded = await boundText(text, tempPrefix);
 	if (!bounded.truncation) return result;
 
 	const nonText = result.content.filter((part) => part.type !== "text");
@@ -93,29 +78,29 @@ async function boundResult<TDetails>(
 		details: {
 			...details,
 			truncation: bounded.truncation,
-			...(bounded.fullOutputSaved !== undefined ? { fullOutputSaved: bounded.fullOutputSaved } : {}),
-			...(bounded.fullOutputPath ? { fullOutputPath: bounded.fullOutputPath } : {}),
+			fullOutputPath: bounded.fullOutputPath,
 		} as TDetails,
 	};
 }
 
 export function withToolOutputContract<TParams extends TSchema, TDetails, TState>(
 	definition: ToolDefinition<TParams, TDetails, TState>,
-	options: OutputContractOptions<import("typebox").Static<TParams>> = {},
+	options: OutputContractOptions = {},
 ): ToolDefinition<TParams, TDetails, TState> {
 	const execute = definition.execute.bind(definition);
 	return {
 		...definition,
 		async execute(id, params, signal, onUpdate, ctx) {
-			const preserve = options.preserveFullOutput?.(params) ?? false;
 			const tempPrefix = options.tempPrefix ?? `pi-control-${definition.name}`;
+			let result: AgentToolResult<TDetails>;
 			try {
-				return await boundResult(await execute(id, params, signal, onUpdate, ctx), preserve, tempPrefix);
+				result = await execute(id, params, signal, onUpdate, ctx);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				const bounded = await boundText(message, preserve, tempPrefix);
+				const bounded = await boundText(message, tempPrefix);
 				throw new Error(bounded.text, { cause: error });
 			}
+			return boundResult(result, tempPrefix);
 		},
 	};
 }

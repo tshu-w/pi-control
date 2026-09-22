@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createJiti } from "jiti";
+import { Text } from "@earendil-works/pi-tui";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { registerSessionsRouter } = await jiti.import("../extensions/session.ts");
@@ -14,6 +15,16 @@ registerSessionsRouter(pi);
 registerTreeRouter(pi);
 registerModelsRouter(pi);
 registerCommandsRouter(pi);
+
+function assertWrappedHint(tool, result, context, theme, hiddenText) {
+	const component = tool.renderResult(result, { expanded: false, isPartial: false }, theme, context);
+	for (const width of [24, 1000, 40]) {
+		component.invalidate();
+		const expected = new Text(hiddenText, 0, 0).render(width).length;
+		const lines = component.render(width).map((line) => line.trimEnd()).join("\n");
+		assert.ok(lines.includes(`... (${expected} more lines,`), `hidden display lines at width ${width}: ${lines}`);
+	}
+}
 
 const cases = [
 	["sessions", { action: "search", keyword: "renderer", limit: 10, scope: "all" }, '<b>sessions</b>(action="search", keyword="renderer", limit=10, scope="all")'],
@@ -43,7 +54,7 @@ test("router calls render every argument in function-call form", () => {
 test("command runs collapse output after fifteen lines", () => {
 	const commands = tools.get("commands");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const notifications = Array.from({ length: 16 }, (_, index) => `notification ${index + 1}`);
+	const notifications = Array.from({ length: 16 }, (_, index) => `notification ${index + 1}${index === 15 ? " 中🙂".repeat(20) : ""}`);
 	const content = notifications.join("\n");
 	const context = { args: { action: "run" }, isError: false };
 
@@ -56,16 +67,17 @@ test("command runs collapse output after fifteen lines", () => {
 	assert.match(collapsed, /^notification 1/);
 	assert.match(collapsed, /notification 15/);
 	assert.doesNotMatch(collapsed, /notification 16/);
-	assert.match(collapsed, /\.\.\. \(1 command output line hidden, .*to expand\)$/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)$/);
+	assertWrappedHint(commands, { content: [{ type: "text", text: content }], details: {} }, context, theme, notifications[15]);
 
-	const notice = "[Output truncated: 100 lines. Full output: /tmp/command.txt]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/command.txt]";
 	const truncated = commands.renderResult(
 		{ content: [{ type: "text", text: `${content}\n\n${notice}` }], details: { truncation: { truncated: true } } },
 		{ expanded: false, isPartial: false },
 		theme,
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[Output truncated:/);
+	assert.match(truncated, /to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
 });
 
 test("command lists collapse after twenty entries and retain truncation notices", () => {
@@ -79,9 +91,10 @@ test("command lists collapse after twenty entries and retain truncation notices"
 
 	const collapsed = commands.renderResult(result, { expanded: false, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
+	assertWrappedHint(commands, result, context, theme, entries.slice(20).join("\n"));
 	assert.match(collapsed, /command-20/);
 	assert.doesNotMatch(collapsed, /command-21/);
-	assert.match(collapsed, /\.\.\. \(1 command hidden, .*to expand\)\n\n\[Output truncated:/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
 
 	const expanded = commands.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
@@ -91,7 +104,7 @@ test("command lists collapse after twenty entries and retain truncation notices"
 test("model consultations collapse after fifteen response lines", () => {
 	const models = tools.get("models");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const response = Array.from({ length: 16 }, (_, index) => `response line ${index + 1}`).join("\n");
+	const response = Array.from({ length: 16 }, (_, index) => `response line ${index + 1}${index === 15 ? " wrapped".repeat(10) : ""}`).join("\n");
 	const header = "response from provider/model ↑1200 ↓800 $0.0123";
 	const content = `${header}\n\n${response}`;
 	const context = { args: { action: "consult" }, isError: false };
@@ -104,10 +117,11 @@ test("model consultations collapse after fifteen response lines", () => {
 	).render(1000).map((line) => line.trimEnd()).join("\n");
 	assert.match(collapsed, /response line 15/);
 	assert.doesNotMatch(collapsed, /response line 16/);
-	assert.match(collapsed, /\.\.\. \(1 response line hidden, .*to expand\)$/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)$/);
 	assert.doesNotMatch(collapsed, /Output truncated/);
+	assertWrappedHint(models, { content: [{ type: "text", text: content }], details: {} }, context, theme, response.split("\n").slice(15).join("\n"));
 
-	const notice = "[Output truncated: 100 lines. Full output: /tmp/consult.txt]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/consult.txt]";
 	const truncatedContent = `${content}\n\n${notice}`;
 	const truncated = models.renderResult(
 		{ content: [{ type: "text", text: truncatedContent }], details: { truncation: { truncated: true } } },
@@ -115,7 +129,7 @@ test("model consultations collapse after fifteen response lines", () => {
 		theme,
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[Output truncated:/);
+	assert.match(truncated, /to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
 
 	const partial = models.renderResult(
 		{ content: [{ type: "text", text: "Consulting provider/model..." }], details: {} },
@@ -132,16 +146,17 @@ test("model lists collapse after twenty entries and retain truncation notices", 
 	const entries = Array.from({ length: 21 }, (_, index) =>
 		`- provider/model-${index + 1} context=128000 reasoning=false`,
 	);
-	const notice = "[Output truncated: 100 lines. Full output: /tmp/models.txt]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/models.txt]";
 	const content = `all available models:\n${entries.join("\n")}\n\n${notice}`;
 	const result = { content: [{ type: "text", text: content }], details: {} };
 	const context = { args: { action: "list", scope: "all" }, isError: false };
 
 	const collapsed = models.renderResult(result, { expanded: false, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
+	assertWrappedHint(models, result, context, theme, entries.slice(20).join("\n"));
 	assert.match(collapsed, /model-20/);
 	assert.doesNotMatch(collapsed, /model-21/);
-	assert.match(collapsed, /\.\.\. \(1 model hidden, .*to expand\)\n\n\[Output truncated:/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
 
 	const expanded = models.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
@@ -162,10 +177,11 @@ test("grouped tree results collapse after five complete fork points", () => {
 
 	const collapsed = tree.renderResult(result, { expanded: false, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
+	assertWrappedHint(tree, result, context, theme, groups.slice(5).join("\n"));
 	assert.match(collapsed, /fork-5/);
 	assert.match(collapsed, /branch-5/);
 	assert.doesNotMatch(collapsed, /fork-6/);
-	assert.match(collapsed, /\.\.\. \(1 fork point hidden, .*to expand\)\n\n\[12 more fork points/);
+	assert.match(collapsed, /\.\.\. \(2 more lines, .*to expand\)\n\n\[12 more fork points/);
 
 	const expanded = tree.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
@@ -185,9 +201,10 @@ test("linear tree results collapse after fifteen entries and retain continuation
 
 	const collapsed = tree.renderResult(result, { expanded: false, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
+	assertWrappedHint(tree, result, context, theme, entries.slice(15).join("\n"));
 	assert.match(collapsed, /entry-15/);
 	assert.doesNotMatch(collapsed, /entry-16/);
-	assert.match(collapsed, /\.\.\. \(1 entry hidden, .*to expand\)/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)/);
 	assert.match(collapsed, /\[24 older entries\. Use offset=16 to continue\.\]$/);
 
 	const expanded = tree.renderResult(result, { expanded: true, isPartial: false }, theme, context)
@@ -201,7 +218,9 @@ test("hard truncation notices use warning while continuation hints stay subdued"
 		bold: (text) => text,
 		fg: (color, text) => { styles.push([color, text]); return text; },
 	};
-	const notice = "[Output truncated: 100 lines. Full output: /tmp/output.txt]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/output.txt]";
+	const continuation = "[12 more results. Use offset=5 to continue.]";
+	const suffix = `\nScope: all\n\n${continuation}`;
 	for (const [name, args] of [
 		["commands", { action: "run" }],
 		["models", { action: "consult" }],
@@ -209,27 +228,35 @@ test("hard truncation notices use warning while continuation hints stay subdued"
 		["tree", { action: "search" }],
 	]) {
 		const body = name === "commands" ? "[Output truncated: user content]\nbody" : "body";
-		tools.get(name).renderResult(
-			{ content: [{ type: "text", text: `${body}\n\n${notice}` }], details: { truncation: { truncated: true } } },
-			{ expanded: true, isPartial: false },
-			theme,
-			{ args, isError: false },
-		).render(1000);
+		for (const prefix of [`${body}\n\n`, ""]) {
+			const content = `${prefix}${notice}${suffix}`;
+			const rendered = tools.get(name).renderResult(
+				{ content: [{ type: "text", text: content }], details: { truncation: { truncated: true } } },
+				{ expanded: true, isPartial: false },
+				theme,
+				{ args, isError: false },
+			).render(1000).map((line) => line.trimEnd()).join("\n");
+			assert.equal(rendered, content);
+		}
 	}
-	assert.equal(styles.filter(([color, text]) => color === "warning" && text === notice).length, 4);
+	assert.equal(styles.filter(([color, text]) => color === "warning" && text === notice).length, 8);
+	assert.equal(styles.filter(([color, text]) => color === "toolOutput" && text.includes(suffix)).length, 8);
+	assert.equal(styles.some(([color, text]) => color === "warning" && /Scope:|Use offset=/.test(text)), false);
 
 	styles.length = 0;
 	const retainedEntries = Array.from({ length: 16 }, (_, index) => `[entry-${index + 1}] user: preview`);
 	tools.get("tree").renderResult(
-		{ content: [{ type: "text", text: `entries\n${retainedEntries.join("\n")}\n\n${notice}` }], details: { shown: 100, truncation: { truncated: true } } },
+		{ content: [{ type: "text", text: `entries\n${retainedEntries.join("\n")}\n\n${notice}${suffix}` }], details: { shown: 100, truncation: { truncated: true } } },
 		{ expanded: false, isPartial: false },
 		theme,
 		{ args: { action: "list", scope: "branch" }, isError: false },
 	).render(1000);
 	assert.ok(styles.some(([color, text]) => color === "warning" && text === notice), "collapsed tree retains the hard truncation warning");
+	assert.ok(styles.some(([color, text]) => color === "muted" && /\.\.\. \(1 more lines, .*to expand\)/.test(text)));
+	assert.ok(styles.some(([color, text]) => color === "toolOutput" && text === "Scope: all"));
+	assert.ok(styles.some(([color, text]) => color === "toolOutput" && text === continuation));
 
 	styles.length = 0;
-	const continuation = "[12 more entries. Use offset=5 to continue.]";
 	tools.get("tree").renderResult(
 		{ content: [{ type: "text", text: continuation }], details: {} },
 		{ expanded: true, isPartial: false },
@@ -248,23 +275,24 @@ test("session searches collapse after five complete records", () => {
 		`  preview: "preview ${index + 1}"`,
 	].join("\n"));
 	const notice = "[Output truncated: 100 lines. Narrow the filter or use pagination to continue.]";
-	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]\n\n${notice}`;
+	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\n[2 more results. Use offset=6 to continue.]\n\n${notice}`;
 	const result = { content: [{ type: "text", text: content }], details: {} };
 	const context = { args: { action: "search" }, isError: false };
 
 	const collapsed = sessions.renderResult(result, { expanded: false, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
+	assertWrappedHint(sessions, result, context, theme, records.slice(5).join("\n\n"));
 	assert.match(collapsed, /name="session 5"/);
 	assert.doesNotMatch(collapsed, /name="session 6"/);
-	assert.match(collapsed, /\.\.\. \(1 session hidden, .*to expand\)/);
-	assert.match(collapsed, /\[Use sessions\(action="resume"/);
-	assert.match(collapsed, /\[Output truncated:/);
+	assert.match(collapsed, /\.\.\. \(3 more lines, .*to expand\)/);
+	assert.match(collapsed, /\[2 more results. Use offset=6 to continue.\]/);
+	assert.match(collapsed, /\[(?:Output truncated:|Showing lines)/);
 
 	const expanded = sessions.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
 	assert.equal(expanded, content);
 
-	const fiveSessions = `sessions (5 returned)\n\n${records.slice(0, 5).join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]`;
+	const fiveSessions = `sessions (5 returned)\n\n${records.slice(0, 5).join("\n\n")}`;
 	const notCollapsed = sessions.renderResult(
 		{ content: [{ type: "text", text: fiveSessions }], details: {} },
 		{ expanded: false, isPartial: false },
@@ -272,4 +300,14 @@ test("session searches collapse after five complete records", () => {
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
 	assert.equal(notCollapsed, fiveSessions);
+
+	const sevenSessions = `sessions (7 returned)\n\n${[...records, records[5]].join("\n\n")}`;
+	const twoHiddenRecords = sessions.renderResult(
+		{ content: [{ type: "text", text: sevenSessions }], details: {} },
+		{ expanded: false, isPartial: false },
+		theme,
+		context,
+	).render(1000).map((line) => line.trimEnd()).join("\n");
+	assert.match(twoHiddenRecords, /\.\.\. \(7 more lines, .*to expand\)/);
+	assert.doesNotMatch(twoHiddenRecords, /name="session 6"/);
 });

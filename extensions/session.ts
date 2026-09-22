@@ -5,7 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { clampLimit, scanSessions } from "./utils.js";
 import { scheduleAction, hasPending } from "./command-actions.js";
-import { renderToolCall } from "./render-call.js";
+import { renderCollapsed, renderToolCall } from "./render-call.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 export function registerSessionsRouter(pi: ExtensionAPI) {
@@ -13,40 +13,34 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		name: "sessions",
 		label: "Sessions",
 		description: [
-			"Session management. resume, new, and reload take effect after the current turn.",
-			"info: current session details (model, tokens, cwd).",
-			"search: find or list past sessions.",
-			"resume: switch to a different session by file path (changes active session; current context will be lost).",
-			"new: start a new session.",
-			"name: set session display name.",
-			"queue_message: queue a user message in the current session.",
-			"reload: reload extensions and runtime.",
+			"Manage Sessions: inspect state, search, resume, create, rename, queue user messages, or reload extensions and runtime.",
+			"resume, new, and reload take effect after the current turn.",
+			"resume and new replace the active Session and its context.",
 		].join(" "),
-		promptSnippet: "Manage pi runtime sessions",
+		promptSnippet: "Manage Sessions",
 		promptGuidelines: [
-			"Use sessions(action='search') to find past sessions, then sessions(action='resume', sessionFile=...) to switch.",
-			"Ask before resume or new unless the user explicitly requested it; they change the active session.",
-			"Use sessions(action='queue_message') to send a follow-up user message in the current session.",
-			"Pass message= to resume/new/reload to send a follow-up user message after the transition.",
-			"Use sessions(action='info') to check the current model, token usage, cwd, and session file.",
+			"Use sessions(action='search') when the Session file to resume is unknown.",
+			"Use sessions(action='resume') or sessions(action='new') for user-approved Session changes.",
+			"Finish your turn after calling sessions with action='resume', 'new', or 'reload'.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["info", "search", "resume", "new", "name", "queue_message", "reload"] as const, {
 				description: "Action to perform",
 			}),
-			// search params
-			keyword: Type.Optional(Type.String({ description: "Search keyword (case-insensitive). For search." })),
-			limit: Type.Optional(Type.Integer({ description: "Max results. Default: 10, maximum: 100. For search.", minimum: 1, maximum: 100 })),
-			scope: Type.Optional(StringEnum(["cwd", "all"] as const, { description: '"cwd" (default) limits search to sessions in the current working directory; "all" scans every session. For search.' })),
 			// resume params
-			sessionFile: Type.Optional(Type.String({ description: "Full path to session .jsonl file. For resume." })),
+			sessionFile: Type.Optional(Type.String({ description: "Full path to a Session .jsonl file for resume. Required for resume." })),
 			// new params
-			linkParent: Type.Optional(Type.Boolean({ description: "Link current session as parent. Default: true. For new." })),
+			linkParent: Type.Optional(Type.Boolean({ description: "Link the current Session as parent when creating a new Session (default: true)." })),
 			// name params
-			name: Type.Optional(Type.String({ description: "Display name for the session. For name." })),
+			name: Type.Optional(Type.String({ description: "Non-empty Session display name. Required for name." })),
 			// queue_message params (also used as followUp for resume/new/reload)
-			message: Type.Optional(Type.String({ description: "Message content delivered as a user message. For queue_message: the queued body. For resume/new/reload: a next-turn directive." })),
-			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: 'Delivery mode. "followUp" (default) waits until the agent finishes; "steer" delivers after the current assistant turn\'s tool calls, before the next model call. For queue_message.' })),
+			message: Type.Optional(Type.String({ description: "Non-empty user message. Required for queue_message; optional next-turn instruction for resume, new, or reload." })),
+			deliverAs: Type.Optional(StringEnum(["steer", "followUp"] as const, { description: "Delivery mode for queue_message (default: followUp). followUp waits until the agent finishes; steer delivers after current tool calls, before the next model call." })),
+			// search params
+			keyword: Type.Optional(Type.String({ description: "Case-insensitive keyword for search." })),
+			scope: Type.Optional(StringEnum(["cwd", "all"] as const, { description: "Search scope (default: cwd). cwd searches Sessions in the current working directory; all searches every Session." })),
+			limit: Type.Optional(Type.Integer({ description: "Maximum search results (default: 10, max: 100).", minimum: 1, maximum: 100 })),
+			offset: Type.Optional(Type.Integer({ description: "Number of search results to skip (default: 0).", minimum: 0 })),
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("sessions", args, theme, !context.isPartial);
@@ -63,15 +57,16 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			const records = sections.filter((section) => section.startsWith("- name="));
 			if (records.length <= 5) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
-			const visible = [sections[0]!, ...records.slice(0, 5)]
-				.map((section) => theme.fg("toolOutput", section));
-			const hidden = records.length - 5;
-			visible.push(theme.fg("dim", `... (${hidden} session${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`));
-			const footerSections = sections.filter((section) =>
-				section.startsWith("[Use sessions(") || section.startsWith("[Output truncated:"),
-			);
-			visible.push(...footerSections.map((section) => styleToolOutput(section, truncated, theme)));
-			return new Text(visible.join("\n\n"), 0, 0);
+			return renderCollapsed(records.slice(5).join("\n\n"), (hidden) => {
+				const visible = [sections[0]!, ...records.slice(0, 5)]
+					.map((section) => theme.fg("toolOutput", section));
+				visible.push(theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`));
+				const footerSections = sections.filter((section) =>
+					/^(?:\[Output truncated:|\[Showing |\[Line )/.test(section) || /^\[\d+ more results\./.test(section),
+				);
+				visible.push(...footerSections.map((section) => styleToolOutput(section, truncated, theme)));
+				return new Text(visible.join("\n\n"), 0, 0);
+			});
 		},
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			switch (params.action) {
@@ -113,13 +108,18 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 				case "search": {
 					const limit = Math.max(1, clampLimit(params.limit, 10, 100));
 					const scope = (params.scope ?? "cwd") as "cwd" | "all";
-					const results = await scanSessions(params.keyword, limit, signal, { scope, cwd: ctx.cwd });
+					const offset = clampLimit(params.offset, 0, Number.MAX_SAFE_INTEGER);
+					const matches = await scanSessions(params.keyword, Infinity, signal, { scope, cwd: ctx.cwd });
+					const total = matches.length;
+					const results = matches.slice(offset, offset + limit);
 
 					if (results.length === 0) {
 						const match = params.keyword ? ` matching ${JSON.stringify(params.keyword)}` : "";
 						return {
-							content: [{ type: "text", text: `No sessions found${match} (scope: ${scope}).` }],
-							details: { results: [], scope },
+							content: [{ type: "text", text: total > 0
+								? `No sessions at offset ${offset} (total: ${total}, scope: ${scope}).`
+								: `No sessions found${match} (scope: ${scope}).` }],
+							details: { results: [], scope, total, offset, limit },
 						};
 					}
 
@@ -136,11 +136,15 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						return lines.join("\n");
 					});
 
+					const remaining = total - offset - results.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} more results. Use offset=${offset + results.length} to continue.]`
+						: "";
 					return {
-						content: [{ type: "text", text: `sessions (${results.length} returned)\n\n${records.join("\n\n")}\n\n[Use sessions(action="resume", sessionFile=...) to switch.]` }],
+						content: [{ type: "text", text: `sessions (${results.length} returned)\n\n${records.join("\n\n")}${continuation}` }],
 						details: {
 							results: results.map(({ file, sessionId, timestamp, name, cwd }) => ({ sessionFile: file, sessionId, timestamp, name, cwd })),
-							scope,
+							scope, total, offset, limit,
 						},
 					};
 				}
@@ -236,7 +240,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 				}
 
 				default:
-					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
+					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}));

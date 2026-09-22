@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export function getSessionsDir(): string {
@@ -62,9 +63,11 @@ export async function scanSessions(
 	const lowerKw = keyword?.toLowerCase();
 	const results: SessionScanResult[] = [];
 
+	if (signal?.aborted) throw new Error("Session search cancelled.");
 	for (const { file } of listSessionFiles()) {
-		if (signal?.aborted) throw new Error("Session search cancelled.");
 		if (results.length >= limit) break;
+		await setImmediate();
+		if (signal?.aborted) throw new Error("Session search cancelled.");
 
 		let raw: string;
 		try { raw = fs.readFileSync(file, "utf-8"); } catch { continue; }

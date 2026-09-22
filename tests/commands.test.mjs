@@ -62,6 +62,7 @@ test("completed commands return notifications once and preserve status updates",
 });
 
 test("command failures reject while scheduled transitions remain successful", async () => {
+	const originalError = new Error("boom");
 	const failureCases = [
 		{
 			name: "handler failure",
@@ -71,7 +72,7 @@ test("command failures reject while scheduled transitions remain successful", as
 				sourceInfo: { path: "/tmp/broken.ts", source: "local", scope: "user" },
 				handler: async (_args, ctx) => {
 					ctx.ui.notify("before failure", "warning");
-					throw new Error("boom");
+					throw originalError;
 				},
 			},
 			pattern: /\/broken: failed[\s\S]*Error: boom[\s\S]*\[warning\] before failure/,
@@ -117,7 +118,11 @@ test("command failures reject while scheduled transitions remain successful", as
 	};
 	const { tool, ctx } = setup(transition);
 	const scheduled = await tool.execute("scheduled", { action: "run", name: "reload-now" }, undefined, undefined, ctx);
-	assert.equal(scheduled.details.status, "scheduled_transition");
+	assert.equal(scheduled.content[0].text, "/reload-now: reload scheduled after the current turn.");
+	assert.deepEqual(scheduled.details, {
+		status: "scheduled_transition",
+		scheduledTransition: { op: "reload" },
+	});
 
 	const { tool: busyTool, ctx: busyCtx } = setup(transition);
 	assert.equal(scheduleRawOp(busyCtx, "occupied", async () => {}).ok, true);

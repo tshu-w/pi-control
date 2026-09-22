@@ -1,13 +1,14 @@
 import { StringEnum, type Usage } from "@earendil-works/pi-ai";
-import { complete, getModel } from "@earendil-works/pi-ai/compat";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderToolCall } from "./render-call.js";
+import { renderCollapsed, renderToolCall } from "./render-call.js";
+import { clampLimit } from "./utils.js";
 import { scheduleDeferred } from "./command-actions.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function scopedModels(ctx: any, available: any[]): any[] {
 	return ctx.scopedModels.length > 0
@@ -39,6 +40,11 @@ async function resolveModel(
 	let resolvedProvider = provider ? (providerMap.get(provider.toLowerCase()) ?? provider) : undefined;
 	let resolvedModelId = modelId;
 
+	if (resolvedProvider) {
+		const exact = ctx.modelRegistry.find(resolvedProvider, modelId);
+		if (exact) return { model: exact };
+	}
+
 	const slashIndex = modelId.indexOf("/");
 	if (slashIndex !== -1) {
 		const maybeProvider = modelId.substring(0, slashIndex);
@@ -65,59 +71,58 @@ async function resolveModel(
 		const scopedMatches = findMatches(scopedModels(ctx, available));
 		if (scopedMatches.length === 1) return { model: scopedMatches[0] };
 		if (scopedMatches.length > 1) {
-			return { model: null, error: `Ambiguous modelId "${modelId}" in scoped models. Use provider/modelId or pass provider.` };
+			return { model: null, error: `Ambiguous modelId "${modelId}" in scoped models. Candidates: ${scopedMatches.map(m => `${m.provider}/${m.id}`).join(", ")}. Use provider/modelId or pass provider.` };
 		}
 	}
 
 	const matches = findMatches(available);
 	if (matches.length === 1) return { model: matches[0] };
 	if (matches.length > 1) {
-		return { model: null, error: `Ambiguous modelId "${modelId}". Use provider/modelId or pass provider.` };
+		return { model: null, error: `Ambiguous modelId "${modelId}". Candidates: ${matches.map(m => `${m.provider}/${m.id}`).join(", ")}. Use provider/modelId or pass provider.` };
 	}
 	return { model: null };
 }
 
 export function registerModelsRouter(pi: ExtensionAPI) {
-	const pendingErrorUsage = new Map<string, Usage>();
+	const pendingUsage = new Map<string, Usage>();
 	pi.on("tool_result", (event) => {
 		if (event.toolName !== "models") return;
-		const usage = pendingErrorUsage.get(event.toolCallId);
+		const usage = pendingUsage.get(event.toolCallId);
 		if (usage === undefined) return;
-		pendingErrorUsage.delete(event.toolCallId);
-		return { usage };
+		pendingUsage.delete(event.toolCallId);
+		if (event.usage === undefined) return { usage };
 	});
 
 	pi.registerTool(withToolOutputContract({
 		name: "models",
 		label: "Models",
 		description: [
-			"Model listing, switching, and consultation.",
-			"list: show available models (scoped or all).",
-			"switch: schedule a model change that applies when the current turn ends; include `message` to drive the next turn on the new model.",
-			"consult: one-shot call to another model (no tool access, result inline).",
+			"List available models, switch the active model, or consult another model.",
+			"switch takes effect after the current turn.",
+			"consult returns a one-shot response without tools or a change to the active model.",
 		].join(" "),
-		promptSnippet: "List, switch, or consult pi models",
+		promptSnippet: "List, switch, or consult models",
 		promptGuidelines: [
 			"Use models(action='list') to discover available scoped models when the target is uncertain.",
-			"Use models(action='switch', modelId=..., message=...) to hand off: the switch applies when the current turn ends and the message starts the next turn on the new model \u2014 finish your turn right after calling it.",
-			"Use models(action='consult', prompt=...) for a one-shot second opinion or review without changing the active model.",
 			"Prefer scoped models; use scope='all' only when the user asks or scoped results are insufficient.",
+			"Finish your turn after calling models(action='switch').",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "switch", "consult"] as const, {
 				description: "Action to perform",
 			}),
-			// list params
-			scope: Type.Optional(StringEnum(["scoped", "all"] as const, { description: '"scoped" (default) or "all". For list.' })),
-			filter: Type.Optional(Type.String({ description: "Filter by provider or model name substring. For list." })),
 			// switch / consult params
-			provider: Type.Optional(Type.String({ description: "Model provider. Optional if modelId uses provider/modelId or is unambiguous. For switch/consult." })),
-			modelId: Type.Optional(Type.String({ description: 'Model ID or provider/modelId, e.g. "gpt-5.5" or "openai-codex/gpt-5.5". For switch/consult.' })),
-			thinkingLevel: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level. For switch or consult." })),
-			message: Type.Optional(Type.String({ description: "Directive for the next turn, delivered as a user message after the switch applies at end of the current turn. For switch." })),
+			modelId: Type.Optional(Type.String({ description: "Model ID or provider/modelId for switch or consult. Required for both." })),
+			provider: Type.Optional(Type.String({ description: "Model provider for switch or consult. Optional when modelId includes the provider or identifies a unique model." })),
+			thinkingLevel: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level for switch or consult." })),
+			message: Type.Optional(Type.String({ description: "User message to start the next turn after switch." })),
 			// consult params
-			prompt: Type.Optional(Type.String({ description: "Prompt to send. For consult." })),
-			systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt. For consult." })),
+			prompt: Type.Optional(Type.String({ description: "Prompt for consult. Required for consult." })),
+			// list params
+			scope: Type.Optional(StringEnum(["scoped", "all"] as const, { description: "Model scope for list (default: scoped). scoped uses configured models, or all available models if none are configured; all lists every available model." })),
+			filter: Type.Optional(Type.String({ description: "Case-insensitive substring filter on provider, model ID, or model name for list." })),
+			limit: Type.Optional(Type.Integer({ description: "Maximum results for list (default: 20, max: 200).", minimum: 1, maximum: 200, default: 20 })),
+			offset: Type.Optional(Type.Integer({ description: "Number of filtered results to skip for list (default: 0).", minimum: 0, default: 0 })),
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("models", args, theme, !context.isPartial);
@@ -134,36 +139,38 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 				if (modelLines.length <= 20) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const footerLines = lines.slice(lines.lastIndexOf(modelLines.at(-1)!) + 1).filter(Boolean);
-				const hidden = modelLines.length - 20;
-				const visible = [
-					theme.fg("toolOutput", lines[0]!),
-					...modelLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
-					"",
-					theme.fg("dim", `... (${hidden} model${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
-				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
-				return new Text(visible.join("\n"), 0, 0);
+				return renderCollapsed(modelLines.slice(20).join("\n"), (hidden) => {
+					const visible = [
+						theme.fg("toolOutput", lines[0]!),
+						...modelLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
+						"",
+						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					];
+					if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
+					return new Text(visible.join("\n"), 0, 0);
+				});
 			}
 
 			if (context.args.action === "consult") {
 				const separator = text.indexOf("\n\n");
 				if (separator < 0) return new Text(theme.fg("toolOutput", text), 0, 0);
-				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
+				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const responseLines = text.slice(separator + 2, bodyEnd).split("\n");
 				while (responseLines.at(-1) === "") responseLines.pop();
 				if (responseLines.length <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
-				const hidden = responseLines.length - 15;
-				const visible = [
-					theme.fg("toolOutput", text.slice(0, separator)),
-					"",
-					...responseLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
-					"",
-					theme.fg("dim", `... (${hidden} response ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
-				];
-				if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
-				return new Text(visible.join("\n"), 0, 0);
+				return renderCollapsed(responseLines.slice(15).join("\n"), (hidden) => {
+					const visible = [
+						theme.fg("toolOutput", text.slice(0, separator)),
+						"",
+						...responseLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+						"",
+						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					];
+					if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
+					return new Text(visible.join("\n"), 0, 0);
+				});
 			}
 
 			return new Text(styleToolOutput(text, truncated, theme), 0, 0);
@@ -188,47 +195,55 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						)
 						: candidates;
 
+					const limit = Math.max(1, clampLimit(params.limit, 20, 200));
+					const offset = clampLimit(params.offset, 0, Number.MAX_SAFE_INTEGER);
+					const total = filtered.length;
+					const page = filtered.slice(offset, offset + limit);
+
 					const header = scope === "scoped" && ctx.scopedModels.length > 0
 						? `scoped models (${ctx.scopedModels.length} configured)`
 						: scope === "scoped"
-							? "no scoped models configured, showing all:"
+							? "no scoped models configured, using all available models:"
 							: "all available models:";
 
-					if (filtered.length === 0) {
+					if (page.length === 0) {
 						return {
-							content: [{ type: "text", text: `${header}\nNo models found${filter ? ` matching "${params.filter}"` : ""}. Check API keys.` }],
-							details: { scope, models: [] },
+							content: [{ type: "text", text: total > 0
+								? `${header}\nNo models at offset ${offset} (total: ${total}).`
+								: `${header}\nNo models found${filter ? ` matching "${params.filter}"` : ""}. Check API keys.` }],
+							details: { scope, total, offset, limit, models: [] },
 						};
 					}
 
-					const lines = filtered.map(m =>
+					const lines = page.map(m =>
 						`- ${m.provider}/${m.id} context=${m.contextWindow} reasoning=${m.reasoning ?? false}`
 					);
 
+					const remaining = total - offset - page.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} more results. Use offset=${offset + page.length} to continue.]`
+						: "";
 					return {
-						content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }],
-						details: { scope, models: filtered.map(m => ({ provider: m.provider, id: m.id })) },
+						content: [{ type: "text", text: `${header}\n${lines.join("\n")}${continuation}` }],
+						details: { scope, total, offset, limit, models: page.map(m => ({ provider: m.provider, id: m.id })) },
 					};
 				}
 
 				// ── switch ──────────────────────────────────────────
 				case "switch": {
 					if (!params.modelId) {
-						return { content: [{ type: "text", text: "`modelId` is required for switch." }], details: {} };
+						throw new Error("`modelId` is required for switch.");
 					}
 
 					const resolved = await resolveModel(ctx, params.provider, params.modelId);
 					if (!resolved.model) {
-						return {
-							content: [{ type: "text", text: resolved.error ?? `Model not found: ${params.provider ?? "(auto)"}/${params.modelId}. Use models(action='list') to find valid models.` }],
-							details: {},
-						};
+						throw new Error(resolved.error ?? `Model not found: ${params.provider ?? "(auto)"}/${params.modelId}. Use models(action='list') to find valid models.`);
 					}
 					const model = resolved.model;
 
 					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-					if (!auth.ok || !auth.apiKey) {
-						return { content: [{ type: "text", text: `No API key for ${model.provider}/${model.id}.` }], details: {} };
+					if (!auth.ok) {
+						throw new Error(`No API key for ${model.provider}/${model.id}.`);
 					}
 
 					// Deferred switch: the model change (and thinking level) applies on
@@ -245,7 +260,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						if (params.message) pi.sendUserMessage(params.message, { deliverAs: "followUp" });
 					});
 					if (!scheduled.ok) {
-						return { content: [{ type: "text", text: `Cannot schedule switch: ${scheduled.reason}.` }], details: {} };
+						throw new Error(`Cannot schedule switch: ${scheduled.reason}.`);
 					}
 
 					return {
@@ -257,42 +272,35 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 				// ── consult ─────────────────────────────────────────
 				case "consult": {
 					if (!params.modelId || !params.prompt) {
-						return { content: [{ type: "text", text: "`modelId` and `prompt` are required for consult." }], details: {} };
+						throw new Error("`modelId` and `prompt` are required for consult.");
 					}
 
 					const resolved = await resolveModel(ctx, params.provider, params.modelId, { includeUnregistered: true });
 					if (!resolved.model) {
-						return { content: [{ type: "text", text: resolved.error ?? `Model not found: ${params.provider ?? "(auto)"}/${params.modelId}` }], details: {} };
+						throw new Error(resolved.error ?? `Model not found: ${params.provider ?? "(auto)"}/${params.modelId}`);
 					}
 					const model = resolved.model;
 
-					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-					if (!auth.ok || !auth.apiKey) {
-						return { content: [{ type: "text", text: `No API key for ${model.provider}/${model.id}` }], details: {} };
-					}
-
 					const thinkingLevel = params.thinkingLevel;
 					const useReasoning = !!(model.reasoning && thinkingLevel && thinkingLevel !== "off");
-					const completeOpts: any = { apiKey: auth.apiKey, headers: auth.headers, signal };
+					const completeOpts: any = { signal };
 					if (useReasoning) completeOpts.reasoning = thinkingLevel;
 
 					onUpdate?.({ content: [{ type: "text", text: `Consulting ${model.provider}/${model.id}${useReasoning ? ` (thinking: ${thinkingLevel})` : ""}...` }], details: {} });
 
-					const response = await complete(
+					const response = await ctx.modelRegistry.streamSimple(
 						model,
 						{
-							systemPrompt: params.systemPrompt ?? "You are a helpful assistant. Be concise and precise.",
 							messages: [{ role: "user", content: [{ type: "text", text: params.prompt }], timestamp: Date.now() }],
 						},
 						completeOpts,
-					);
+					).result();
 
+					pendingUsage.set(toolCallId, response.usage);
 					if (response.stopReason === "aborted") {
-						pendingErrorUsage.set(toolCallId, response.usage);
 						throw new Error("Consultation aborted.");
 					}
 					if (response.stopReason === "error") {
-						pendingErrorUsage.set(toolCallId, response.usage);
 						throw new Error(response.errorMessage ?? "Consultation failed.");
 					}
 
@@ -314,11 +322,10 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 				}
 
 				default:
-					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
+					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}, {
-		preserveFullOutput: (params) => params.action === "consult",
 		tempPrefix: "pi-control-consult",
 	}));
 }

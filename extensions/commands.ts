@@ -42,7 +42,8 @@ import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
-import { renderToolCall } from "./render-call.js";
+import { renderCollapsed, renderToolCall } from "./render-call.js";
+import { clampLimit } from "./utils.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 class DeferredTransitionRequested extends Error {
@@ -180,7 +181,11 @@ function renderResult(
 
 	const lines = [`/${command}${args ? " " + args : ""}: ${status}`];
 	if (extra.scheduled) {
-		lines.push(`Scheduled transition: ${extra.scheduled.op}`);
+		if (status === "scheduled_transition") {
+			lines[0] = `/${command}${args ? " " + args : ""}: ${extra.scheduled.op} scheduled after the current turn.`;
+		} else {
+			lines.push(`Scheduled transition: ${extra.scheduled.op}`);
+		}
 		if (extra.scheduled.reason) lines.push(`  (note: ${extra.scheduled.reason})`);
 	}
 	if (extra.error) lines.push(`Error: ${extra.error}`);
@@ -196,31 +201,27 @@ function renderResult(
 	};
 }
 
-function throwCommandResult(result: ReturnType<typeof renderResult>): never {
-	throw new Error(result.content[0]?.text ?? "Command failed.");
+function throwCommandResult(result: ReturnType<typeof renderResult>, cause: unknown): never {
+	throw new Error(result.content[0]?.text ?? "Command failed.", { cause });
 }
 
 export function registerCommandsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
 		name: "commands",
 		label: "Commands",
-		description: [
-			"Invoke arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls.",
-			"list: enumerate all registered slash commands (name, description, source).",
-			"run: execute a slash command by name with optional argument string.",
-			"For pi-control's own routes (sessions/tree/models), use those tools directly — they offer structured args and safer scheduling.",
-		].join(" "),
-		promptSnippet: "Third-party slash commands: list, run",
+		description: "List and run registered extension slash commands.",
+		promptSnippet: "List and run registered extension slash commands",
 		promptGuidelines: [
-			"Use commands(action='list') to discover what slash commands the user's extensions registered.",
-			"Use commands(action='run', name, args?) to invoke one. Args is a single string passed verbatim to the handler (the same way `/cmd args...` would).",
-			"If status='scheduled_transition', the handler asked to switch session/fork/reload; it will happen after this turn.",
+			"Use commands(action='list') when the command name is unknown or ambiguous.",
+			"Use sessions, tree, and models directly for their respective operations.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "run"] as const, { description: "Action to perform" }),
-			name: Type.Optional(Type.String({ description: "Command invocation name (without leading slash). For run." })),
-			args: Type.Optional(Type.String({ description: "Argument string passed verbatim to the handler. For run. Default: empty." })),
-			filter: Type.Optional(Type.String({ description: "Substring filter on name or description. For list." })),
+			name: Type.Optional(Type.String({ description: "Command name for run, without the leading slash. Required for run." })),
+			args: Type.Optional(Type.String({ description: "Argument string for run, passed verbatim to the command handler (default: empty)." })),
+			filter: Type.Optional(Type.String({ description: "Case-insensitive substring filter on command names and descriptions for list." })),
+			limit: Type.Optional(Type.Integer({ description: "Maximum results for list (default: 20, max: 200).", minimum: 1, maximum: 200, default: 20 })),
+			offset: Type.Optional(Type.Integer({ description: "Number of filtered results to skip for list (default: 0).", minimum: 0, default: 0 })),
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("commands", args, theme, !context.isPartial);
@@ -237,31 +238,33 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 				if (commandLines.length <= 20) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 				const footerLines = lines.slice(lines.lastIndexOf(commandLines.at(-1)!) + 1).filter(Boolean);
-				const hidden = commandLines.length - 20;
-				const visible = [
-					...commandLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
-					"",
-					theme.fg("dim", `... (${hidden} command${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
-				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
-				return new Text(visible.join("\n"), 0, 0);
+				return renderCollapsed(commandLines.slice(20).join("\n"), (hidden) => {
+					const visible = [
+						...commandLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
+						"",
+						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					];
+					if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
+					return new Text(visible.join("\n"), 0, 0);
+				});
 			}
 
 			if (context.args.action === "run") {
-				const footerStart = truncated ? text.lastIndexOf("\n\n[Output truncated:") : -1;
+				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const lines = text.slice(0, bodyEnd).split("\n");
 				while (lines.at(-1) === "") lines.pop();
 				if (lines.length <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
-				const hidden = lines.length - 15;
-				const visible = [
-					...lines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
-					"",
-					theme.fg("dim", `... (${hidden} command output ${hidden === 1 ? "line" : "lines"} hidden, ${keyText("app.tools.expand")} to expand)`),
-				];
-				if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
-				return new Text(visible.join("\n"), 0, 0);
+				return renderCollapsed(lines.slice(15).join("\n"), (hidden) => {
+					const visible = [
+						...lines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+						"",
+						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					];
+					if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
+					return new Text(visible.join("\n"), 0, 0);
+				});
 			}
 
 			return new Text(styleToolOutput(text, truncated, theme), 0, 0);
@@ -287,23 +290,35 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 							(c.description ?? "").toLowerCase().includes(filter))
 						: all;
 
-					if (filtered.length === 0) {
+					const limit = Math.max(1, clampLimit(params.limit, 20, 200));
+					const offset = clampLimit(params.offset, 0, Number.MAX_SAFE_INTEGER);
+					const total = filtered.length;
+					const page = filtered.slice(offset, offset + limit);
+
+					if (page.length === 0) {
 						return {
-							content: [{ type: "text", text: filter ? `No commands match "${filter}".` : "No third-party slash commands registered." }],
-							details: { commands: [] },
+							content: [{ type: "text", text: total > 0
+								? `No commands at offset ${offset} (total: ${total}).`
+								: filter ? `No commands match "${filter}".` : "No third-party slash commands registered." }],
+							details: { total, offset, limit, commands: [] },
 						};
 					}
 
-					const lines = filtered.map(c => {
+					const lines = page.map(c => {
 						const parts = [`/${c.invocationName}`];
 						if (c.description) parts.push(`— ${c.description}`);
 						parts.push(`(${c.sourceInfo.source})`);
 						return parts.join(" ");
 					});
+					const remaining = total - offset - page.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} more results. Use offset=${offset + page.length} to continue.]`
+						: "";
 					return {
-						content: [{ type: "text", text: lines.join("\n") }],
+						content: [{ type: "text", text: lines.join("\n") + continuation }],
 						details: {
-							commands: filtered.map(c => ({
+							total, offset, limit,
+							commands: page.map(c => ({
 								invocationName: c.invocationName,
 								source: c.sourceInfo.source,
 								path: c.sourceInfo.path,
@@ -348,7 +363,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 							if (e.schedulingError) {
 								throwCommandResult(renderResult("busy", name, args, capture, {
 									scheduled: { op: e.op, reason: e.schedulingError },
-								}));
+								}), e);
 							}
 							return renderResult("scheduled_transition", name, args, capture, {
 								scheduled: { op: e.op },
@@ -365,11 +380,11 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						if (e instanceof InteractiveUIUnavailable) {
 							throwCommandResult(renderResult("interactive_unavailable", name, args, capture, {
 								error: e.message,
-							}));
+							}), e);
 						}
 						throwCommandResult(renderResult("failed", name, args, capture, {
 							error: e instanceof Error ? `${e.message}` : String(e),
-						}));
+						}), e);
 					}
 				}
 			}
@@ -377,7 +392,6 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			throw new Error(`Unknown action: ${params.action}`);
 		},
 	}, {
-		preserveFullOutput: (params) => params.action === "run",
 		tempPrefix: "pi-control-command",
 	}));
 }

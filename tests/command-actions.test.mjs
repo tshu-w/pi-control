@@ -33,10 +33,9 @@ const actions = {
 const reset = () => { calls.length = 0; notes.length = 0; behavior = { cancelled: false, throwError: null, gate: null, idleGate: null }; clearPending(owner); };
 const schedule = (action) => scheduleAction(owner, { fallbackHint: "Use built-in `/x` instead.", action, successText: "scheduled", details: {} });
 
-test("unarmed scheduling falls back to built-in hint", () => {
+test("unarmed scheduling throws with the built-in hint", () => {
 	assert.equal(isArmed(owner), false);
-	const r = schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	assert.match(r.content[0].text, /Command context not captured/);
+	assert.throws(() => schedule({ kind: "resume", file: "/tmp/a.jsonl" }), /Command context not captured.*Use built-in/);
 	assert.equal(hasPending(owner), false);
 });
 
@@ -99,7 +98,7 @@ test("single pending slot: second schedule is rejected", () => {
 
 	assert.equal(schedule({ kind: "resume", file: "/tmp/a.jsonl" }).content[0].text, "scheduled");
 	assert.equal(hasPending(owner), true);
-	assert.match(schedule({ kind: "reload" }).content[0].text, /already scheduled/);
+	assert.throws(() => schedule({ kind: "reload" }), /already scheduled/);
 	clearPending(owner);
 });
 
@@ -136,7 +135,7 @@ test("single slot covers in-flight execution: no scheduling while a transition r
 
 	// The in-flight action must keep the slot occupied.
 	assert.equal(hasPending(owner), true, "in-flight transition must occupy the slot");
-	assert.match(schedule({ kind: "reload" }).content[0].text, /in-flight resume/);
+	assert.throws(() => schedule({ kind: "reload" }), /in-flight resume/);
 	assert.equal(scheduleRawOp(owner, "op", async () => {}).ok, false, "rawOp must be rejected while in flight");
 	assert.equal(scheduleDeferred(owner, "switch", async () => {}).ok, false, "deferred must be rejected while in flight");
 
@@ -241,7 +240,7 @@ test("waitForIdle gates transitions: a turn racing the settled window finishes f
 	// The racing turn must not be able to schedule a second transition that
 	// would resume concurrently on the same idle edge (the reviewer's repro:
 	// start:A start:B end:A end:B).
-	assert.match(schedule({ kind: "resume", file: "/tmp/b.jsonl" }).content[0].text, /in-flight resume/);
+	assert.throws(() => schedule({ kind: "resume", file: "/tmp/b.jsonl" }), /in-flight resume/);
 	const second = runPending(owner, notify);
 
 	releaseIdle();

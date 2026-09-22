@@ -15,12 +15,12 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 | `models` | `list`, `switch`, `consult` |
 | `commands` | `list`, `run` |
 
-**Status line** (event-driven)
+**Runtime status** (event-driven)
 
-Appended to the last user message on state changes:
+Sent to the model as a separate context message on state changes:
 
-- **Model switch** (including first turn): `[pi-control] model=<provider/id>`
-- **Context threshold crossing** (70 / 85 / 95%): `[pi-control] context=<n>% (<level>)`
+- **Model switch** (excluding the first turn): `[pi-control] Switched from model <previous> to model <current>.`
+- **Context threshold crossing** (70 / 85 / 95%): `[pi-control] Context usage: <n>%.`
 
 Full runtime details available via `sessions(action='info')`.
 
@@ -34,7 +34,7 @@ pi install git:github.com/tshu-w/pi-control
 
 pi-control patches Pi's internal command context because session transitions are not yet exposed as public extension APIs. This may require updates when Pi changes its internals; affected actions return fallback instructions when the patch is unavailable. Run `/reload` after upgrading pi-control.
 
-Requires pi >= 0.83.0 and is tested against `@earendil-works/pi-coding-agent` 0.86.0. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
+Requires pi >= 0.86.0 and is tested against `@earendil-works/pi-coding-agent` 0.86.0. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
 ## Testing
 

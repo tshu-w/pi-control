@@ -44,7 +44,7 @@ export default function (pi: ExtensionAPI) {
 	registerCommandsRouter(pi);
 
 	// ── Context event: inject runtime status only on state changes ──
-	// Fires on: model switch (incl. first turn), context/tool threshold crossings.
+	// Fires on: model switch, context/tool threshold crossings.
 	// Skips injection on most turns to preserve prompt cache.
 	pi.on("context", async (event, ctx) => {
 		const messages = event.messages;
@@ -60,14 +60,14 @@ export default function (pi: ExtensionAPI) {
 		// ── Determine what changed ──
 		const reasons: string[] = [];
 
-		if (modelId !== lastModel) {
-			reasons.push(`model=${modelId}`);
-			lastModel = modelId;
+		if (lastModel !== null && modelId !== lastModel) {
+			reasons.push(`Switched from model ${lastModel} to model ${modelId}.`);
 		}
+		lastModel = modelId;
 
 		const cb = contextBucket(ctxPct);
 		if (cb && cb !== lastContextBucket) {
-			reasons.push(`context=${ctxPct}% (${cb})`);
+			reasons.push(`Context usage: ${ctxPct}%.`);
 		}
 		lastContextBucket = cb;
 
@@ -128,10 +128,10 @@ export default function (pi: ExtensionAPI) {
 		if (warnedOnce) return;
 		if (!patchOk) {
 			warnedOnce = true;
-			if (ctx.hasUI) ctx.ui.notify("pi-control: failed to patch ExtensionRunner — resume/new/navigate/fork will fall back to built-in commands", "warning");
+			if (ctx.hasUI) ctx.ui.notify("pi-control: Session controls unavailable because runtime integration failed. Use /resume, /new, or /tree manually.", "warning");
 		} else if (!isArmed(ctx)) {
 			warnedOnce = true;
-			if (ctx.hasUI) ctx.ui.notify("pi-control: command context not captured — resume/new/navigate/fork will fall back to built-in commands", "warning");
+			if (ctx.hasUI) ctx.ui.notify("pi-control: Session controls unavailable because command context is not ready. Use /resume, /new, or /tree manually.", "warning");
 		}
 	});
 

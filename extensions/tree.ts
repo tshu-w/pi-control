@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -5,7 +6,7 @@ import { Type } from "typebox";
 import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
-import { renderToolCall } from "./render-call.js";
+import { renderCollapsed, renderToolCall } from "./render-call.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
@@ -23,6 +24,9 @@ function resolveNavigateTarget(sm: any, target: string): any | null {
 	for (const e of sm.getEntries()) {
 		if (sm.getLabel((e as any).id) === target) return e;
 	}
+	if (idMatches.length > 1) {
+		throw new Error(`Ambiguous target "${target}". Candidates: ${idMatches.map((e: any) => e.id).join(", ")}. Use a full entry ID.`);
+	}
 	return null;
 }
 
@@ -31,44 +35,37 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		name: "tree",
 		label: "Tree",
 		description: [
-			"Session entry operations.",
-			"list: browse current-branch entries or a session-wide branch overview.",
-			"search: find entries by keyword.",
-			"labels: show labeled/bookmarked entries.",
-			"set_label: set or clear a label on an entry.",
-			"navigate: jump to a different point in the session tree by entry ID/prefix or label.",
-			"fork: create a new session forked before a specific user-message entry.",
-			"compact: summarize older messages to free up context window (irreversible within session).",
+			"Browse and navigate the current Session tree, search entries, manage labels, fork a new Session before a user message, or compact model context.",
+			"navigate and fork take effect after the current turn.",
 		].join(" "),
-		promptSnippet: "Browse and navigate current pi session tree",
+		promptSnippet: "Browse and navigate the current Session tree",
 		promptGuidelines: [
-			"Use tree(action='list') or tree(action='search') to find entry IDs before navigate, fork, or set_label.",
-			"tree(action='fork') branches from an existing user turn; choose an entry whose role is user, or the call is rejected.",
-			"Use tree(action='navigate') to jump to an entry or label; ask first unless explicitly requested.",
-			"Use tree(action='set_label', entryId, label) to bookmark an entry; omit label to clear.",
-			"Use tree(action='compact') when context usage is high; it rewrites older history irreversibly within the session.",
+			"Use tree(action='list') or tree(action='search') when the target entry is unknown.",
+			"Use tree(action='navigate') for user-approved changes to the active branch.",
+			"Use tree(action='compact') when context usage is high.",
+			"Finish your turn after calling tree with action='navigate' or 'fork'.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "search", "labels", "set_label", "navigate", "fork", "compact"] as const, {
 				description: "Action to perform",
 			}),
-			// list params
-			scope: Type.Optional(StringEnum(["branch", "all"] as const, { description: '"branch" (default) or "all". For list.' })),
-			limit: Type.Optional(Type.Number({ description: 'Max items. Default: 20 for list/labels and 10 for search; maximum: 200 for list/labels and 100 for search.', maximum: 200 })),
-			offset: Type.Optional(Type.Number({ description: 'Skip N items for list/labels pagination. For scope="branch": entries from the end. For scope="all": fork points after the current branch summary. Default: 0.' })),
-			filter: Type.Optional(StringEnum(["default", "user-only", "no-tools", "labeled-only", "all"] as const, {
-				description: 'Filter mode for `scope="branch"`. "default" hides settings entries, "user-only" shows only user messages, "no-tools" hides tool results, "labeled-only" shows labeled entries, "all" shows everything. Default: "default". For list.',
-			})),
-			types: Type.Optional(Type.Array(Type.String(), { description: 'Filter by entry type for `scope="branch"`, e.g. ["message", "compaction"]. Overrides filter if set. For list.' })),
-			// search params
-			keyword: Type.Optional(Type.String({ description: "Search keyword (case-insensitive). For search." })),
 			// navigate / fork / set_label params
-			entryId: Type.Optional(Type.String({ description: "Target entry ID. For fork/set_label; also accepted for navigate compatibility." })),
-			target: Type.Optional(Type.String({ description: "Target entry ID/prefix or label. For navigate." })),
-			label: Type.Optional(Type.String({ description: "Label to set. Omit to clear. For set_label." })),
-			summarize: Type.Optional(Type.Boolean({ description: "Summarize abandoned branch. Default: false. For navigate." })),
-			customInstructions: Type.Optional(Type.String({ description: "Custom instructions for context summarization. For navigate/compact." })),
-			message: Type.Optional(Type.String({ description: "Optional next-turn directive delivered as a user message. For navigate/fork/compact. Omit to leave the agent idle." })),
+			target: Type.Optional(Type.String({ description: "Entry ID, ID prefix, or label for navigate." })),
+			entryId: Type.Optional(Type.String({ description: "Entry ID for fork or set_label. Required for both; fork requires a user-message entry. Also accepted as the target for navigate." })),
+			label: Type.Optional(Type.String({ description: "Label for set_label. Omit to clear the entry's label." })),
+			message: Type.Optional(Type.String({ description: "User message to start the next turn after navigate, fork, or compact. Omit to leave the agent idle." })),
+			summarize: Type.Optional(Type.Boolean({ description: "Summarize the abandoned branch for navigate (default: false)." })),
+			customInstructions: Type.Optional(Type.String({ description: "Summarization instructions for navigate or compact." })),
+			// search params
+			keyword: Type.Optional(Type.String({ description: "Case-insensitive keyword for search across the entire Session tree. Required for search." })),
+			// list params
+			scope: Type.Optional(StringEnum(["branch", "all"] as const, { description: "Scope for list (default: branch). branch shows current-branch entries; all shows a Session-wide branch overview." })),
+			filter: Type.Optional(StringEnum(["default", "user-only", "no-tools", "labeled-only", "all"] as const, {
+				description: "Entry filter for list with scope=branch (default: default). default hides settings entries; user-only shows user messages; no-tools hides settings entries and tool results; labeled-only shows labeled entries; all shows everything.",
+			})),
+			types: Type.Optional(Type.Array(Type.String(), { description: "Entry types for list with scope=branch, such as message or compaction. Overrides filter." })),
+			limit: Type.Optional(Type.Integer({ description: "Maximum results (default: 20 for list or labels, 10 for search; max: 200 for list or labels, 100 for search).", minimum: 1, maximum: 200 })),
+			offset: Type.Optional(Type.Integer({ description: "Number of items to skip for list, search, or labels (default: 0). list with scope=branch starts at the newest entry; scope=all paginates fork points after the current-branch summary.", minimum: 0 })),
 		}),
 		renderCall(args, theme, context) {
 			return renderToolCall("tree", args, theme, !context.isPartial);
@@ -100,16 +97,17 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				if (currentGroup) groups.push(currentGroup);
 				if (groups.length <= 5) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
-				const hidden = groups.length - 5;
-				const visible = [
-					theme.fg("toolOutput", lines[0]!),
-					"",
-					...groups.slice(0, 5).flat().map((line) => theme.fg("toolOutput", line)),
-					"",
-					theme.fg("dim", `... (${hidden} fork point${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
-				];
-				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
-				return new Text(visible.join("\n"), 0, 0);
+				return renderCollapsed(groups.slice(5).flat().join("\n"), (hidden) => {
+					const visible = [
+						theme.fg("toolOutput", lines[0]!),
+						"",
+						...groups.slice(0, 5).flat().map((line) => theme.fg("toolOutput", line)),
+						"",
+						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					];
+					if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
+					return new Text(visible.join("\n"), 0, 0);
+				});
 			}
 
 			let shown: number | undefined;
@@ -125,24 +123,24 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			if (shown === undefined) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			const lines = text.split("\n");
-			const hardFooterIndex = truncated ? lines.findIndex((line) => line.startsWith("[Output truncated:")) : -1;
+			const hardFooterIndex = truncated ? lines.findIndex((line) => /^(?:\[Output truncated:|\[Showing |\[Line )/.test(line)) : -1;
 			const retainedLines = lines.slice(1, hardFooterIndex >= 0 ? hardFooterIndex : undefined).filter(Boolean);
 			const actualShown = hardFooterIndex >= 0 ? retainedLines.length : shown;
 			if (actualShown <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 			const itemLines = hardFooterIndex >= 0 ? retainedLines : lines.slice(1, shown + 1);
 			const footerLines = hardFooterIndex >= 0 ? lines.slice(hardFooterIndex) : lines.slice(shown + 1).filter(Boolean);
-			const hidden = actualShown - 15;
-			const itemLabel = context.args.action === "labels" ? "label" : "entry";
-			const visible = [
-				theme.fg("toolOutput", lines[0]!),
-				...itemLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
-				"",
-				theme.fg("dim", `... (${hidden} ${itemLabel}${hidden === 1 ? "" : "s"} hidden, ${keyText("app.tools.expand")} to expand)`),
-			];
-			if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
-			return new Text(visible.join("\n"), 0, 0);
+			return renderCollapsed(itemLines.slice(15).join("\n"), (hidden) => {
+				const visible = [
+					theme.fg("toolOutput", lines[0]!),
+					...itemLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
+					"",
+					theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+				];
+				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
+				return new Text(visible.join("\n"), 0, 0);
+			});
 		},
-		async execute(_id, params, _signal, _onUpdate, ctx) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			switch (params.action) {
 				// ── list ─────────────────────────────────────────────
 				case "list": {
@@ -152,10 +150,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 					if (scope === "all") {
 						if (params.filter !== undefined || (params.types && params.types.length > 0)) {
-							return {
-								content: [{ type: "text", text: "`filter` and `types` are only supported with scope=\"branch\"." }],
-								details: {},
-							};
+							throw new Error("`filter` and `types` are only supported with scope=\"branch\".");
 						}
 
 						const tree = ctx.sessionManager.getTree();
@@ -248,10 +243,12 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				// ── search ──────────────────────────────────────────
 				case "search": {
 					if (!params.keyword) {
-						return { content: [{ type: "text", text: "`keyword` is required for search." }], details: {} };
+						throw new Error("`keyword` is required for search.");
 					}
 					const kw = params.keyword.toLowerCase();
-					const limit = clampLimit(params.limit, 10, 100);
+					const limit = Math.max(1, clampLimit(params.limit, 10, 100));
+					const offset = clampLimit(params.offset, 0, Number.MAX_SAFE_INTEGER);
+					if (signal?.aborted) throw new Error("Tree search cancelled.");
 
 					// Search entire tree, not just current branch
 					const tree = ctx.sessionManager.getTree();
@@ -259,6 +256,8 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					const allEntries: any[] = [];
 					const walkStack: any[] = [...(tree ?? [])];
 					while (walkStack.length > 0) {
+						if (allEntries.length % 100 === 0) await setImmediate();
+						if (signal?.aborted) throw new Error("Tree search cancelled.");
 						const node = walkStack.pop()!;
 						allEntries.push(node.entry);
 						if (node.children) {
@@ -274,8 +273,9 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					});
 
 					const matches: Array<{ preview: string; onBranch: boolean }> = [];
-					for (const entry of allEntries) {
-						if (matches.length >= limit) break;
+					for (const [index, entry] of allEntries.entries()) {
+						if (index % 100 === 0) await setImmediate();
+						if (signal?.aborted) throw new Error("Tree search cancelled.");
 						const text = getEntryText(entry);
 						if (text && text.toLowerCase().includes(kw)) {
 							matches.push({
@@ -285,17 +285,25 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						}
 					}
 
-					if (matches.length === 0) {
+					const total = matches.length;
+					const page = matches.slice(offset, offset + limit);
+					if (page.length === 0) {
 						return {
-							content: [{ type: "text", text: `No entries matching "${params.keyword}" in session.` }],
-							details: { matches: 0 },
+							content: [{ type: "text", text: total > 0
+								? `No matches at offset ${offset} (total: ${total}).`
+								: `No entries matching "${params.keyword}" in session.` }],
+							details: { matches: 0, total, offset, limit },
 						};
 					}
 
-					const lines = matches.map(m => m.onBranch ? m.preview : `${m.preview}  [off-branch]`);
+					const lines = page.map(m => m.onBranch ? m.preview : `${m.preview}  [off-branch]`);
+					const remaining = total - offset - page.length;
+					const continuation = remaining > 0
+						? `\n\n[${remaining} more results. Use offset=${offset + page.length} to continue.]`
+						: "";
 					return {
-						content: [{ type: "text", text: `matches for "${params.keyword}" (${matches.length})\n${lines.join("\n")}` }],
-						details: { matches: matches.length },
+						content: [{ type: "text", text: `matches for "${params.keyword}" (${page.length})\n${lines.join("\n")}${continuation}` }],
+						details: { matches: page.length, total, offset, limit },
 					};
 				}
 
@@ -345,11 +353,11 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				// ── set_label ───────────────────────────
 				case "set_label": {
 					if (!params.entryId) {
-						return { content: [{ type: "text", text: "`entryId` is required for set_label." }], details: {} };
+						throw new Error("`entryId` is required for set_label.");
 					}
 					const target = ctx.sessionManager.getEntry(params.entryId);
 					if (!target) {
-						return { content: [{ type: "text", text: `Entry not found: ${params.entryId}` }], details: {} };
+						throw new Error(`Entry not found: ${params.entryId}`);
 					}
 
 					// Clear label if none provided
@@ -367,10 +375,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						const eid = (e as any).id;
 						if (eid === params.entryId) continue;
 						if (ctx.sessionManager.getLabel(eid) === params.label) {
-							return {
-								content: [{ type: "text", text: `Label "${params.label}" already used by [${eid.slice(0, 8)}]. Choose a different label.` }],
-								details: {},
-							};
+							throw new Error(`Label "${params.label}" already used by [${eid}]. Choose a different label.`);
 						}
 					}
 
@@ -385,11 +390,11 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				case "navigate": {
 					const rawTarget = params.target ?? params.entryId;
 					if (!rawTarget) {
-						return { content: [{ type: "text", text: "`target` is required for navigate." }], details: {} };
+						throw new Error("`target` is required for navigate.");
 					}
 					const navEntry = resolveNavigateTarget(ctx.sessionManager, rawTarget);
 					if (!navEntry) {
-						return { content: [{ type: "text", text: `Target not found: ${rawTarget}` }], details: {} };
+						throw new Error(`Target not found: ${rawTarget}`);
 					}
 					if (navEntry.id === ctx.sessionManager.getLeafId()) {
 						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
@@ -411,20 +416,17 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				// ── fork ────────────────────────────────────────────
 				case "fork": {
 					if (!params.entryId) {
-						return { content: [{ type: "text", text: "`entryId` is required for fork." }], details: {} };
+						throw new Error("`entryId` is required for fork.");
 					}
 					const target = ctx.sessionManager.getEntry(params.entryId);
 					if (!target) {
-						return { content: [{ type: "text", text: `Entry not found: ${params.entryId}` }], details: {} };
+						throw new Error(`Entry not found: ${params.entryId}`);
 					}
 					if (target.type !== "message" || target.message?.role !== "user") {
 						const actualKind = target.type === "message"
 							? `message role "${target.message?.role ?? "unknown"}"`
 							: `type "${target.type}"`;
-						return {
-							content: [{ type: "text", text: `Fork requires a user-message entry. Entry ${params.entryId} is ${actualKind}.` }],
-							details: {},
-						};
+						throw new Error(`Fork requires a user-message entry. Entry ${params.entryId} is ${actualKind}.`);
 					}
 					return scheduleAction(ctx, {
 						fallbackHint: "Use built-in `/fork` instead.",
@@ -448,13 +450,13 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						},
 					});
 					return {
-						content: [{ type: "text", text: "Compaction triggered." + (params.customInstructions ? ` Instructions: "${params.customInstructions}"` : "") + (params.message ? " (with custom followUp message)" : "") }],
+						content: [{ type: "text", text: "Compaction triggered." + (params.message ? " Your message will be sent after completion." : "") }],
 						details: { scheduled: "compact", messageScheduled: params.message !== undefined },
 					};
 				}
 
 				default:
-					return { content: [{ type: "text", text: `Unknown action: "${params.action}"` }], details: {} };
+					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}));

@@ -1,4 +1,4 @@
-import { Text } from "@earendil-works/pi-tui";
+import { Text, type Component } from "@earendil-works/pi-tui";
 
 type ToolCallTheme = {
 	bold(text: string): string;
@@ -19,4 +19,16 @@ export function renderToolCall(name: string, args: unknown, theme: ToolCallTheme
 		text += theme.fg("text", `${key}=${renderValue(value)}`);
 	}
 	return new Text(text + theme.fg("text", ")") + (resultReady ? "\n" : ""), 0, 0);
+}
+
+export function renderCollapsed(hiddenText: string, render: (hiddenLines: number) => Text): Component {
+	const hidden = new Text(hiddenText, 0, 0);
+	return {
+		render(width) {
+			return render(hidden.render(width).length).render(width);
+		},
+		invalidate() {
+			hidden.invalidate();
+		},
+	};
 }

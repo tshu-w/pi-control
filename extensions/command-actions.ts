@@ -146,16 +146,10 @@ export interface ScheduleParams {
 export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
 	const state = stateFor(owner);
 	if (!state?.ops) {
-		return {
-			content: [{ type: "text", text: `Command context not captured. ${params.fallbackHint}` }],
-			details: {},
-		};
+		throw new Error(`Command context not captured. ${params.fallbackHint}`);
 	}
 	if (state.pending || state.inFlight) {
-		return {
-			content: [{ type: "text", text: `Another pending action (${busyKind(state)}) is already scheduled. Wait for the current turn to finish.` }],
-			details: {},
-		};
+		throw new Error(`Another pending action (${busyKind(state)}) is already scheduled. Wait for the current turn to finish.`);
 	}
 	state.pending = params.action;
 	return {
