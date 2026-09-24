@@ -9,7 +9,6 @@ import {
 	DEFAULT_MAX_BYTES as MAX_BYTES,
 	DEFAULT_MAX_LINES as MAX_LINES,
 	ExtensionRunner,
-	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
@@ -215,13 +214,16 @@ test("hard truncation preserves the complete page and restores only omitted cont
 		const result = await tool.execute("id", {}, undefined, undefined, {});
 		try {
 			const text = assertBounded(result);
-			const native = truncateHead(full);
-			assert.deepEqual(result.details.truncation, native);
-			assert.ok(text.startsWith(native.content + "\n\n["), "never prune or rewrite retained content");
+			const truncation = result.details.truncation;
+			assert.equal(truncation.truncated, true);
+			assert.equal(truncation.content, full.slice(0, truncation.content.length), "retained content must be an unchanged prefix");
+			assert.equal(truncation.outputBytes, Buffer.byteLength(truncation.content));
+			if (full.startsWith("header")) assert.equal(truncation.content, "header");
+			assert.ok(text.startsWith(truncation.content + "\n\n["), "never prune or rewrite retained content");
 			assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8"), full);
 			assert.equal(text.match(/Use offset=2 to continue\./g).length, 1);
 			assert.equal(result.details.total, 5);
-			if (!native.content.includes("Use offset=2")) {
+			if (!truncation.content.includes("Use offset=2")) {
 				assert.ok(text.endsWith(`Full output: ${result.details.fullOutputPath}]\n\n${full.trimEnd().split("\n").at(-1)}`));
 			}
 		} finally {

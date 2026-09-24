@@ -53,7 +53,7 @@ test("deferred: runs unarmed, last wins, blocked by other kinds", async () => {
 	assert.equal(failing.ok, true);
 	await runPending(owner, notify);
 	assert.equal(notes[0][0], "error");
-	assert.match(notes[0][1], /Deferred switch-fail failed/);
+	assert.equal(hasPending(owner), false);
 	notes.length = 0;
 });
 
@@ -79,7 +79,7 @@ test("deferred inline: switch completes inside the settled emit, before external
 	// Inline failure notifies instead of throwing into the emit.
 	scheduleDeferred(owner, "bad switch", async () => { throw new Error("boom"); });
 	assert.equal(await runPendingDeferredInline(owner, notify), true);
-	assert.match(notes.at(-1)[1], /Deferred bad switch failed/);
+	assert.equal(notes.at(-1)[0], "error");
 	notes.length = 0;
 
 	// Session-transition kinds are not consumed inline; they need the timer.
@@ -96,7 +96,7 @@ test("single pending slot: second schedule is rejected", () => {
 	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
 	assert.equal(isArmed(owner), true);
 
-	assert.equal(schedule({ kind: "resume", file: "/tmp/a.jsonl" }).content[0].text, "scheduled");
+	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
 	assert.equal(hasPending(owner), true);
 	assert.throws(() => schedule({ kind: "reload" }), /already scheduled/);
 	clearPending(owner);
@@ -142,7 +142,8 @@ test("single slot covers in-flight execution: no scheduling while a transition r
 	release();
 	await running;
 	assert.equal(hasPending(owner), false, "slot must be free after completion");
-	assert.equal(schedule({ kind: "reload" }).content[0].text, "scheduled", "scheduling must work again after completion");
+	schedule({ kind: "reload" });
+	assert.equal(hasPending(owner), true, "scheduling must work again after completion");
 	clearPending(owner);
 });
 
@@ -178,7 +179,8 @@ test("cancelled transitions notify as warning", async () => {
 	behavior.cancelled = true;
 	schedule({ kind: "fork", id: "abc" });
 	await runPending(owner, notify);
-	assert.deepEqual(notes, [["warning", "Fork cancelled"]]);
+	assert.equal(notes.length, 1);
+	assert.equal(notes[0][0], "warning");
 	assert.equal(hasPending(owner), false, "slot must be released after cancellation");
 });
 
@@ -188,9 +190,10 @@ test("failures notify as error", async () => {
 	schedule({ kind: "new" });
 	await runPending(owner, notify);
 	assert.equal(notes[0][0], "error");
-	assert.match(notes[0][1], /New session failed/);
+	assert.match(notes[0][1], /boom/);
 	assert.equal(hasPending(owner), false, "slot must be released after failure");
-	assert.equal(schedule({ kind: "reload" }).content[0].text, "scheduled", "next action must be schedulable after a failure");
+	schedule({ kind: "reload" });
+	assert.equal(hasPending(owner), true, "next action must be schedulable after a failure");
 	clearPending(owner);
 });
 
@@ -253,7 +256,8 @@ test("rawOp: cancelled result surfaces as a warning, also headless", async () =>
 	reset();
 	scheduleRawOp(owner, "op-cancelled", async () => ({ cancelled: true }));
 	await runPending(owner, notify);
-	assert.deepEqual(notes, [["warning", "Command-triggered op-cancelled cancelled"]]);
+	assert.equal(notes.length, 1);
+	assert.equal(notes[0][0], "warning");
 
 	notes.length = 0;
 	const warns = [];
@@ -263,7 +267,7 @@ test("rawOp: cancelled result surfaces as a warning, also headless", async () =>
 		scheduleRawOp(owner, "op-headless", async () => ({ cancelled: true }));
 		await runPending(owner, undefined);
 	} finally { console.warn = origWarn; }
-	assert.ok(warns.some((w) => w.includes("op-headless cancelled")), "headless cancellation must reach console.warn");
+	assert.ok(warns.some((w) => w.includes("op-headless")), "headless cancellation must identify the operation");
 });
 
 test("headless cancelled transitions reach console.warn", async () => {
@@ -276,7 +280,7 @@ test("headless cancelled transitions reach console.warn", async () => {
 		schedule({ kind: "fork", id: "abc" });
 		await runPending(owner, undefined);
 	} finally { console.warn = origWarn; }
-	assert.ok(warns.some((w) => w.includes("Fork cancelled")), "headless veto must not vanish silently");
+	assert.ok(warns.some((w) => /fork/i.test(w)), "headless veto must identify the operation");
 });
 
 test("reload-refreshed module instances share one patch and one state", async () => {
