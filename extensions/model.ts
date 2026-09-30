@@ -95,6 +95,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 
 	pi.registerTool(withToolOutputContract({
 		name: "models",
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		label: "Models",
 		description: [
 			"List available models, switch the active model, or consult another model.",

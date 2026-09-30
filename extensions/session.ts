@@ -11,6 +11,7 @@ import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./to
 export function registerSessionsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
 		name: "sessions",
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		label: "Sessions",
 		description: [
 			"Manage Sessions: inspect state, search, resume, create, rename, queue user messages, or reload extensions and runtime.",

@@ -208,6 +208,7 @@ function throwCommandResult(result: ReturnType<typeof renderResult>, cause: unkn
 export function registerCommandsRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
 		name: "commands",
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		label: "Commands",
 		description: "List and run registered extension slash commands.",
 		promptSnippet: "List and run registered extension slash commands",

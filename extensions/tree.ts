@@ -33,6 +33,7 @@ function resolveNavigateTarget(sm: any, target: string): any | null {
 export function registerTreeRouter(pi: ExtensionAPI) {
 	pi.registerTool(withToolOutputContract({
 		name: "tree",
+		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		label: "Tree",
 		description: [
 			"Browse and navigate the current Session tree, search entries, manage labels, fork a new Session before a user message, or compact model context.",
