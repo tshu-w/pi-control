@@ -5,6 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { clampLimit, formatEntryPreview, getEntryText } from "./utils.js";
 import { scheduleAction } from "./command-actions.js";
+import { registerCompaction, scheduleCompaction } from "./compaction.js";
 import { buildGroupedOverview, renderGroupedOverview } from "./grouped.js";
 import { renderCollapsed, renderToolCall } from "./render-call.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
@@ -31,13 +32,14 @@ function resolveNavigateTarget(sm: any, target: string): any | null {
 }
 
 export function registerTreeRouter(pi: ExtensionAPI) {
+	registerCompaction(pi);
 	pi.registerTool(withToolOutputContract({
 		name: "tree",
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		label: "Tree",
 		description: [
 			"Browse and navigate the current Session tree, search entries, manage labels, fork a new Session before a user message, or compact model context.",
-			"navigate and fork take effect after the current turn.",
+			"navigate and fork take effect after the current turn. compact takes effect after the current tool batch, before the next model request.",
 		].join(" "),
 		promptSnippet: "Browse and navigate the current Session tree",
 		promptGuidelines: [
@@ -54,7 +56,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			target: Type.Optional(Type.String({ description: "Entry ID, ID prefix, or label for navigate." })),
 			entryId: Type.Optional(Type.String({ description: "Entry ID for fork or set_label. Required for both; fork requires a user-message entry. Also accepted as the target for navigate." })),
 			label: Type.Optional(Type.String({ description: "Label for set_label. Omit to clear the entry's label." })),
-			message: Type.Optional(Type.String({ description: "User message to start the next turn after navigate, fork, or compact. Omit to leave the agent idle." })),
+			message: Type.Optional(Type.String({ description: "User message after navigate or fork (omit to leave idle), or a follow-up queued after successful compact. Compact resumes the current task even when omitted." })),
 			summarize: Type.Optional(Type.Boolean({ description: "Summarize the abandoned branch for navigate (default: false)." })),
 			customInstructions: Type.Optional(Type.String({ description: "Summarization instructions for navigate or compact." })),
 			// search params
@@ -439,19 +441,13 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 				// ── compact ─────────────────────────────────────────
 				case "compact": {
-					ctx.compact({
+					scheduleCompaction(ctx, {
 						customInstructions: params.customInstructions,
-						onComplete: () => {
-							if (params.message) {
-								pi.sendUserMessage(params.message, { deliverAs: "followUp" });
-							}
-						},
-						onError: (err) => {
-							pi.sendUserMessage(`Compaction failed: ${err}`, { deliverAs: "followUp" });
-						},
+						message: params.message,
+						signal,
 					});
 					return {
-						content: [{ type: "text", text: "Compaction triggered." + (params.message ? " Your message will be sent after completion." : "") }],
+						content: [{ type: "text", text: "Compaction scheduled before the next model request, after this tool batch completes." + (params.message ? " Your message will be queued after successful compaction." : "") }],
 						details: { scheduled: "compact", messageScheduled: params.message !== undefined },
 					};
 				}

@@ -521,24 +521,19 @@ test("executed commands preserve full output without duplicating captured text i
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
 });
 
-test("compact reports scheduling without echoing instructions and sends follow-up only after completion", async () => {
-	const messages = [];
-	const tree = register(registerTreeRouter, {
-		sendUserMessage: (message, options) => messages.push({ message, options }),
-	});
+test("compact reports scheduling without echoing instructions or starting asynchronous work", async () => {
+	const tree = register(registerTreeRouter);
 	for (const message of [undefined, "Continue after compaction"]) {
-		let compaction;
+		const ctx = { sessionManager: {}, compact: () => assert.fail("must wait for the next request boundary") };
 		const result = await tree.execute("compact", {
 			action: "compact", customInstructions: "Keep implementation details", message,
-		}, undefined, undefined, { compact: (options) => { compaction = options; } });
-		assert.equal(result.content[0].text, message
-			? "Compaction triggered. Your message will be sent after completion."
-			: "Compaction triggered.");
+		}, undefined, undefined, ctx);
+		assert.match(result.content[0].text, /scheduled before the next model request/);
+		assert.doesNotMatch(result.content[0].text, /Keep implementation details/);
 		assert.deepEqual(result.details, { scheduled: "compact", messageScheduled: message !== undefined });
-		assert.equal(compaction.customInstructions, "Keep implementation details");
-		assert.deepEqual(messages, []);
-		compaction.onComplete();
-		assert.deepEqual(messages, message ? [{ message, options: { deliverAs: "followUp" } }] : []);
+		if (message === undefined) {
+			await assert.rejects(tree.execute("duplicate", { action: "compact" }, undefined, undefined, ctx), /already scheduled/);
+		}
 	}
 });
 

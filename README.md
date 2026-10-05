@@ -32,9 +32,9 @@ pi install git:github.com/tshu-w/pi-control
 
 ## Heads-up: private API hack
 
-pi-control patches Pi's internal command context because session transitions are not yet exposed as public extension APIs. This may require updates when Pi changes its internals; affected actions return fallback instructions when the patch is unavailable. Run `/reload` after upgrading pi-control.
+pi-control uses private Pi APIs for runtime controls that are not publicly exposed. This may require updates when Pi changes its internals; affected actions return fallback instructions when the patch is unavailable. Run `/reload` after upgrading pi-control.
 
-Requires pi >= 0.86.0 and is tested against `@earendil-works/pi-coding-agent` 0.86.0. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
+Requires pi >= 0.86.0 and is tested against `@earendil-works/pi-coding-agent` 1.0.1. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
 
 ## Testing
 
