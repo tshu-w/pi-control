@@ -16,7 +16,7 @@ export default function (pi: any) {
 			record({ type: summary ? "summary_request" : "request", messages: context.messages });
 			const output: any = {
 				role: "assistant", content: first
-					? [{ type: "toolCall", id: "compact-call", name: "tree", arguments: { action: "compact", customInstructions: "Retain the test marker", ...(scenario === "message" || scenario === "failure" || scenario === "provider-error" ? { message: "Post-compaction task" } : {}) } }]
+					? [{ type: "toolCall", id: "compact-call", name: "tree", arguments: { action: "compact", customInstructions: "Retain the test marker" } }]
 					: [{ type: "text", text: "Task completed" }],
 				api: model.api, provider: model.provider, model: model.id,
 				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },

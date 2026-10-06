@@ -56,7 +56,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			target: Type.Optional(Type.String({ description: "Entry ID, ID prefix, or label for navigate." })),
 			entryId: Type.Optional(Type.String({ description: "Entry ID for fork or set_label. Required for both; fork requires a user-message entry. Also accepted as the target for navigate." })),
 			label: Type.Optional(Type.String({ description: "Label for set_label. Omit to clear the entry's label." })),
-			message: Type.Optional(Type.String({ description: "User message after navigate or fork (omit to leave idle), or a follow-up queued after successful compact. Compact resumes the current task even when omitted." })),
+			message: Type.Optional(Type.String({ description: "User message after navigate or fork (omit to leave idle)." })),
 			summarize: Type.Optional(Type.Boolean({ description: "Summarize the abandoned branch for navigate (default: false)." })),
 			customInstructions: Type.Optional(Type.String({ description: "Summarization instructions for navigate or compact." })),
 			// search params
@@ -443,12 +443,11 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				case "compact": {
 					scheduleCompaction(ctx, {
 						customInstructions: params.customInstructions,
-						message: params.message,
 						signal,
 					});
 					return {
-						content: [{ type: "text", text: "Compaction scheduled before the next model request, after this tool batch completes." + (params.message ? " Your message will be queued after successful compaction." : "") }],
-						details: { scheduled: "compact", messageScheduled: params.message !== undefined },
+						content: [{ type: "text", text: "Compaction scheduled before the next model request, after this tool batch completes." }],
+						details: { scheduled: "compact" },
 					};
 				}
 

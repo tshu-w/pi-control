@@ -523,18 +523,14 @@ test("executed commands preserve full output without duplicating captured text i
 
 test("compact reports scheduling without echoing instructions or starting asynchronous work", async () => {
 	const tree = register(registerTreeRouter);
-	for (const message of [undefined, "Continue after compaction"]) {
-		const ctx = { sessionManager: {}, compact: () => assert.fail("must wait for the next request boundary") };
-		const result = await tree.execute("compact", {
-			action: "compact", customInstructions: "Keep implementation details", message,
-		}, undefined, undefined, ctx);
-		assert.match(result.content[0].text, /scheduled before the next model request/);
-		assert.doesNotMatch(result.content[0].text, /Keep implementation details/);
-		assert.deepEqual(result.details, { scheduled: "compact", messageScheduled: message !== undefined });
-		if (message === undefined) {
-			await assert.rejects(tree.execute("duplicate", { action: "compact" }, undefined, undefined, ctx), /already scheduled/);
-		}
-	}
+	const ctx = { sessionManager: {}, compact: () => assert.fail("must wait for the next request boundary") };
+	const result = await tree.execute("compact", {
+		action: "compact", customInstructions: "Keep implementation details",
+	}, undefined, undefined, ctx);
+	assert.match(result.content[0].text, /scheduled before the next model request/);
+	assert.doesNotMatch(result.content[0].text, /Keep implementation details/);
+	assert.deepEqual(result.details, { scheduled: "compact" });
+	await assert.rejects(tree.execute("duplicate", { action: "compact" }, undefined, undefined, ctx), /already scheduled/);
 });
 
 test("tree list and labels use forward-only offset continuation", async () => {

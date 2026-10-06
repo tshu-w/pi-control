@@ -2,7 +2,6 @@ import { AgentSession, type ExtensionAPI, type ExtensionContext } from "@earendi
 
 interface Request {
 	customInstructions?: string;
-	message?: string;
 	signal?: AbortSignal;
 }
 
@@ -25,8 +24,7 @@ function installCompactionBoundary(): boolean {
 	const prepare = prototype._compactBeforeNextAssistantResponse;
 	const compact = prototype.compact;
 	if (typeof prepare !== "function" || typeof compact !== "function" ||
-		typeof prototype._clearManualCompactionState !== "function" ||
-		typeof prototype.sendUserMessage !== "function") return false;
+		typeof prototype._clearManualCompactionState !== "function") return false;
 
 	prototype._compactBeforeNextAssistantResponse = async function (context: any) {
 		const owner = this.sessionManager;
@@ -50,9 +48,6 @@ function installCompactionBoundary(): boolean {
 			});
 			await compact.call(session, request.customInstructions);
 			request.signal?.throwIfAborted();
-			if (request.message) {
-				await this.sendUserMessage(request.message, { deliverAs: "followUp" });
-			}
 			return { ...context, messages: this.agent.state.messages.slice() };
 		} finally {
 			registry.inFlight.delete(owner);

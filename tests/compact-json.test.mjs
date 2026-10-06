@@ -39,40 +39,32 @@ async function run(t, scenario) {
 	return { code, signal, events, trace, stderr: stderr.split("\n").filter((line) => line.length < 2000).join("\n") };
 }
 
-for (const scenario of ["normal", "message"]) {
-	test(`JSON compact finishes before the next model request (${scenario})`, { timeout: 15000 }, async (t) => {
-		const result = await run(t, scenario);
-		assert.equal(result.signal, null, result.stderr);
-		assert.equal(result.code, 0, result.stderr);
-		assert.doesNotMatch(result.stderr, /stale|Compaction cancelled/);
-		const start = result.trace.find((entry) => entry.type === "summary_start");
-		assert.equal(start?.instructions, "Retain the test marker");
-		assert.equal(start?.reason, "manual");
-		const complete = result.trace.findIndex((entry) => entry.type === "summary_complete");
-		const requests = result.trace.flatMap((entry, index) => entry.type === "request" ? [{ ...entry, index }] : []);
-		assert.ok(complete >= 0 && complete < requests[1]?.index, "summary must finish before the next model request");
-		assert.match(JSON.stringify(requests[1].messages), /Compacted test marker/);
-		assert.equal(result.events.filter((event) => event.type === "agent_settled").length, 1);
-		const compactEnd = result.events.findIndex((event) => event.type === "compaction_end");
-		assert.ok(compactEnd >= 0 && compactEnd < result.events.findIndex((event) => event.type === "agent_settled"));
-		assert.deepEqual(result.events.filter((event) => event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error").map((event) => event.message.errorMessage), []);
-		if (scenario === "message") {
-			const delivered = result.events.filter((event) => event.type === "message_end" && event.message.role === "user" && JSON.stringify(event.message.content).includes("Post-compaction task"));
-			assert.equal(delivered.length, 1);
-			assert.ok(result.events.indexOf(delivered[0]) > result.events.findIndex((event) => event.type === "compaction_end"));
-		}
-	});
-}
+test("JSON compact finishes before the next model request", { timeout: 15000 }, async (t) => {
+	const result = await run(t, "normal");
+	assert.equal(result.signal, null, result.stderr);
+	assert.equal(result.code, 0, result.stderr);
+	assert.doesNotMatch(result.stderr, /stale|Compaction cancelled/);
+	const start = result.trace.find((entry) => entry.type === "summary_start");
+	assert.equal(start?.instructions, "Retain the test marker");
+	assert.equal(start?.reason, "manual");
+	const complete = result.trace.findIndex((entry) => entry.type === "summary_complete");
+	const requests = result.trace.flatMap((entry, index) => entry.type === "request" ? [{ ...entry, index }] : []);
+	assert.ok(complete >= 0 && complete < requests[1]?.index, "summary must finish before the next model request");
+	assert.match(JSON.stringify(requests[1].messages), /Compacted test marker/);
+	assert.equal(result.events.filter((event) => event.type === "agent_settled").length, 1);
+	const compactEnd = result.events.findIndex((event) => event.type === "compaction_end");
+	assert.ok(compactEnd >= 0 && compactEnd < result.events.findIndex((event) => event.type === "agent_settled"));
+	assert.deepEqual(result.events.filter((event) => event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error").map((event) => event.message.errorMessage), []);
+});
 
-test("cancelled compaction never delivers its success message or crashes with a stale context", { timeout: 15000 }, async (t) => {
+test("cancelled compaction does not crash with a stale context", { timeout: 15000 }, async (t) => {
 	const result = await run(t, "failure");
 	assert.equal(result.signal, null, result.stderr);
 	assert.doesNotMatch(result.stderr, /stale/);
 	assert.ok(result.events.some((event) => event.type === "compaction_end" && event.aborted));
-	assert.ok(!result.events.some((event) => event.type === "message_end" && event.message.role === "user" && JSON.stringify(event.message.content).includes("Post-compaction task")));
 });
 
-test("summary provider failure is observable without delivering the success message", { timeout: 15000 }, async (t) => {
+test("summary provider failure is observable", { timeout: 15000 }, async (t) => {
 	const result = await run(t, "provider-error");
 	assert.equal(result.signal, null, result.stderr);
 	assert.doesNotMatch(result.stderr, /stale/);
@@ -80,7 +72,6 @@ test("summary provider failure is observable without delivering the success mess
 	const failure = result.events.find((event) => event.type === "compaction_end" && event.errorMessage);
 	assert.match(failure?.errorMessage ?? "", /Summary provider unavailable/);
 	assert.equal(failure.aborted, false);
-	assert.ok(!result.events.some((event) => event.type === "message_end" && event.message.role === "user" && JSON.stringify(event.message.content).includes("Post-compaction task")));
 });
 
 test("stopping JSON during compaction exits without a stale completion callback", { timeout: 15000 }, async (t) => {
