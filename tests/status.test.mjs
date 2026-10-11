@@ -9,7 +9,8 @@ const modelB = { provider: "provider-b", id: "model-b" };
 
 function setup() {
 	const handlers = new Map();
-	const forbidPersistence = () => assert.fail("Status must not persist messages or entries");
+	const forbidPersistence = () => assert.fail("Status must use sendMessage");
+	const sent = [];
 	register({
 		registerTool() {},
 		on(event, handler) {
@@ -18,7 +19,10 @@ function setup() {
 			handlers.set(event, callbacks);
 		},
 		appendEntry: forbidPersistence,
-		sendMessage: forbidPersistence,
+		sendMessage(message, options) {
+			assert.deepEqual(options, { triggerTurn: false });
+			sent.push({ role: "custom", ...message, timestamp: Date.now() });
+		},
 		sendUserMessage: forbidPersistence,
 	});
 	const ctx = {
@@ -35,19 +39,20 @@ function setup() {
 			ctx.model = model;
 			ctx.getContextUsage = () => ({ percent });
 			const original = structuredClone(messages);
+			const start = sent.length;
 			const result = await handlers.get("context")[0]({ type: "context", messages }, ctx);
-			const statuses = messages.filter(message => message.customType === "pi-status");
-			assert.deepEqual(messages.filter(message => message.customType !== "pi-status"), original);
+			assert.deepEqual(messages, original, "request history must remain unchanged");
+			assert.equal(result, undefined);
+			const statuses = sent.slice(start);
 			assert.ok(statuses.length <= 1);
 			if (statuses.length) {
-				assert.equal(result.messages, messages);
 				assert.equal(statuses[0].role, "custom");
 				assert.equal(statuses[0].display, false);
 				assert.equal(typeof statuses[0].timestamp, "number");
 			} else {
 				assert.equal(result, undefined);
 			}
-			return { status: statuses[0], messages };
+			return { status: statuses[0], messages: [...messages, ...statuses] };
 		},
 		async shutdown() {
 			for (const handler of handlers.get("session_shutdown")) {
@@ -74,7 +79,7 @@ test("actual switches name the previous and current models exactly and do not re
 	];
 	const { status, messages: updated } = await observe(modelB, 20, messages);
 	assert.equal(status.content, "[pi-control] Switched from model provider-a/model-a to model provider-b/model-b.");
-	assert.equal(updated[3], status, "insert immediately after the last user message");
+	assert.equal(updated.at(-1), status, "append after existing history");
 	assert.equal((await observe({ ...modelB })).status, undefined);
 	assert.equal((await observe()).status.content, "[pi-control] Switched from model provider-b/model-b to model provider-a/model-a.");
 	const sameId = { provider: "provider-b", id: modelA.id };
@@ -103,6 +108,22 @@ test("context thresholds retain rounding, buckets, deduplication and re-entry be
 	}
 });
 
+test("successive tool turns retain status messages without changing the cached prefix", async () => {
+	const { observe } = setup();
+	let history = [{ role: "user", content: "Work", timestamp: 1 }];
+	for (const percent of [71, 72, 85, 86]) {
+		const prefix = structuredClone(history);
+		history.push(
+			{ role: "assistant", content: [{ type: "toolCall", id: `call-${percent}`, name: "read", arguments: {} }], timestamp: percent },
+			{ role: "toolResult", toolCallId: `call-${percent}`, content: [{ type: "text", text: "result" }], timestamp: percent },
+		);
+		const result = await observe(modelA, percent, history);
+		history = result.messages;
+		assert.deepEqual(history.slice(0, prefix.length), prefix);
+		assert.equal(history.filter(message => message.customType === "pi-status").length, percent < 85 ? 1 : 2);
+	}
+});
+
 test("initial high usage still notifies and a simultaneous switch preserves threshold text", async () => {
 	const { observe } = setup();
 	assert.equal((await observe(modelA, 70)).status.content, "[pi-control] Context usage: 70%.");
@@ -127,7 +148,7 @@ test("empty context and missing model do not initialize model tracking", async (
 	assert.equal((await observe(modelA)).status.content, "[pi-control] Switched from model provider-b/model-b to model provider-a/model-a.");
 });
 
-test("shutdown resets model and threshold tracking without persistence", async () => {
+test("shutdown resets model and threshold tracking", async () => {
 	const { observe, shutdown } = setup();
 	await observe(modelA, 85);
 	await observe(modelB, 85);

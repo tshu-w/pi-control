@@ -7,9 +7,8 @@
  *   models    — model listing, switching, and consultation
  *   commands  — dispatch arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls
  *
- * Also registers a context event hook that injects a runtime status line
- * only on significant state changes (model switch, context/tool threshold
- * crossings), not every turn — preserving prompt cache across providers.
+ * Records runtime status only on model switches and context threshold
+ * crossings. Messages are appended to history to preserve prompt caches.
  *
  * Uses a private API hack to capture command-only closures from
  * ExtensionRunner.prototype.bindCommandContext, then executes
@@ -43,9 +42,7 @@ export default function (pi: ExtensionAPI) {
 	registerModelsRouter(pi);
 	registerCommandsRouter(pi);
 
-	// ── Context event: inject runtime status only on state changes ──
-	// Fires on: model switch, context/tool threshold crossings.
-	// Skips injection on most turns to preserve prompt cache.
+	// ── Record runtime status only on state changes ──
 	pi.on("context", async (event, ctx) => {
 		const messages = event.messages;
 		if (!messages || messages.length === 0) return;
@@ -74,23 +71,12 @@ export default function (pi: ExtensionAPI) {
 		// Nothing changed — skip injection entirely.
 		if (reasons.length === 0) return;
 
-		const statusMsg = {
-			role: "custom",
+		// Pi appends this after pending tool results, without starting another turn.
+		pi.sendMessage({
 			customType: "pi-status",
 			content: `[pi-control] ${reasons.join(" | ")}`,
 			display: false,
-			timestamp: Date.now(),
-		} as any;
-
-		// Insert after the last user message.
-		for (let i = messages.length - 1; i >= 0; i--) {
-			if ((messages[i] as any).role === "user") {
-				messages.splice(i + 1, 0, statusMsg);
-				return { messages };
-			}
-		}
-		messages.push(statusMsg);
-		return { messages };
+		}, { triggerTurn: false });
 	});
 
 	// ── Execute pending actions after agent fully settles ──

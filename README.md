@@ -17,7 +17,7 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 
 **Runtime status** (event-driven)
 
-Sent to the model as a separate context message on state changes:
+Notifies the model on state changes:
 
 - **Model switch** (excluding the first turn): `[pi-control] Switched from model <previous> to model <current>.`
 - **Context threshold crossing** (70 / 85 / 95%): `[pi-control] Context usage: <n>%.`
