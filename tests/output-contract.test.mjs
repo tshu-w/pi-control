@@ -9,6 +9,7 @@ import {
 	DEFAULT_MAX_BYTES as MAX_BYTES,
 	DEFAULT_MAX_LINES as MAX_LINES,
 	ExtensionRunner,
+	formatSize,
 } from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
@@ -90,13 +91,13 @@ test("oversized first lines retain no content using native head truncation", asy
 	assert.equal(truncation.lastLinePartial, false);
 	assert.equal(truncation.firstLineExceedsLimit, true);
 	assert.equal(truncation.totalBytes, Buffer.byteLength(full));
-	assert.equal(result.content[0].text, `\n\n[Line 1 is 200.0KB, exceeds 50.0KB limit. Full output: ${result.details.fullOutputPath}]`);
+	assert.equal(result.content[0].text, `\n\n[Line 1 is ${formatSize(Buffer.byteLength(full))}, exceeds ${formatSize(MAX_BYTES)} limit. Full output: ${result.details.fullOutputPath}]`);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8"), full);
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
 });
 
 test("rerunnable results also preserve full output when truncated", async () => {
-	const full = Array.from({ length: 2100 }, (_, i) => `line ${i}`).join("\n");
+	const full = Array.from({ length: MAX_LINES + 100 }, (_, i) => `line ${i}`).join("\n");
 	const tool = withToolOutputContract({
 		name: "list",
 		label: "List",
@@ -108,7 +109,7 @@ test("rerunnable results also preserve full output when truncated", async () => 
 	});
 	const result = await tool.execute("id", {}, undefined, undefined, {});
 	const text = assertBounded(result);
-	assert.match(text, /Showing lines 1-2000 of 2100\. Full output:/);
+	assert.ok(text.includes(`Showing lines 1-${MAX_LINES} of ${MAX_LINES + 100}. Full output:`));
 	assert.equal(result.details.truncation.truncated, true);
 	assert.equal(fs.readFileSync(result.details.fullOutputPath, "utf8"), full);
 	fs.rmSync(path.dirname(result.details.fullOutputPath), { recursive: true });
