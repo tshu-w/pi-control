@@ -32,7 +32,7 @@ export type PendingAction =
 	 *  surfaced as a warning by runPending. */
 	| { kind: "rawOp"; token: symbol; label: string; exec: () => Promise<{ cancelled?: boolean } | void> }
 	/** Public-API work deferred to agent_settled (e.g. model switch). Needs no
-	 *  captured command context; a later deferred replaces a pending one. */
+	 *  captured command context. */
 	| { kind: "deferred"; label: string; exec: () => Promise<void> };
 
 export interface RuntimeContext {
@@ -159,15 +159,15 @@ export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { c
 }
 
 /** Schedule public-API work for agent_settled. Unlike scheduleAction this
- *  needs no captured command context. A pending "deferred" is replaced
- *  (last wins); any other pending kind rejects the request. */
+ *  needs no captured command context. Any pending action rejects the request. */
 export function scheduleDeferred(owner: CommandOwner, label: string, exec: () => Promise<void>): { ok: true } | { ok: false; reason: string } {
 	const state = stateFor(owner, true)!;
 	if (state.inFlight) {
 		return { ok: false, reason: `another action (in-flight ${state.inFlight.kind}) is already executing` };
 	}
-	if (state.pending && state.pending.kind !== "deferred") {
-		return { ok: false, reason: `another pending action (${state.pending.kind}) is already queued` };
+	if (state.pending) {
+		const pending = state.pending.kind === "deferred" ? state.pending.label : state.pending.kind;
+		return { ok: false, reason: `another pending action (${pending}) is already queued` };
 	}
 	state.pending = { kind: "deferred", label, exec };
 	return { ok: true };

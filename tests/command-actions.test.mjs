@@ -39,12 +39,15 @@ test("unarmed scheduling throws with the built-in hint", () => {
 	assert.equal(hasPending(owner), false);
 });
 
-test("deferred: runs unarmed, last wins, blocked by other kinds", async () => {
+test("deferred: runs unarmed, rejects a second deferred, blocked by other kinds", async () => {
 	assert.equal(isArmed(owner), false, "deferred tests must run before the patch arms ops");
 	assert.equal(scheduleDeferred(owner, "switch-a", async () => calls.push(["deferred-a"])).ok, true, "deferred needs no command context");
-	assert.equal(scheduleDeferred(owner, "switch-b", async () => calls.push(["deferred-b"])).ok, true, "a later deferred replaces the pending one");
+	assert.deepEqual(scheduleDeferred(owner, "switch-b", async () => calls.push(["deferred-b"])), {
+		ok: false,
+		reason: "another pending action (switch-a) is already queued",
+	}, "a later deferred must not drop the pending one");
 	await runPending(owner, notify);
-	assert.deepEqual(calls, [["deferred-b"]], "only the last deferred runs, without ops");
+	assert.deepEqual(calls, [["deferred-a"]], "the first deferred runs, without ops");
 	assert.equal(hasPending(owner), false);
 
 	calls.length = 0;
