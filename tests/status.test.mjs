@@ -13,6 +13,7 @@ function setup() {
 	const sent = [];
 	register({
 		registerTool() {},
+		registerCommand() {},
 		on(event, handler) {
 			const callbacks = handlers.get(event) ?? [];
 			callbacks.push(handler);

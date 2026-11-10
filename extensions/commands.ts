@@ -8,7 +8,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { getRunner, getOps, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
+import { getRunner, scheduleRawOp, clearPendingRawOp } from "./command-actions.js";
 import { renderCollapsed, renderToolCall } from "./render-call.js";
 import { clampLimit } from "./utils.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
@@ -57,12 +57,11 @@ interface MediatedContext {
  * any property we did not override (cwd, sessionManager, exec, etc.).
  */
 function mediateCtx(ctx: any, capture: Capture): MediatedContext {
-	const ops = getOps(ctx);
 	const hasUI: boolean = !!ctx?.hasUI;
 	let rawOpToken: symbol | null = null;
 	let transitionRequest: DeferredTransitionRequested | null = null;
 
-	const scheduleTransition = (op: string, runner: () => Promise<{ cancelled?: boolean } | void>): never => {
+	const scheduleTransition = (op: string, runner: (commandCtx: any) => Promise<{ cancelled?: boolean } | void>): never => {
 		const result = scheduleRawOp(ctx, OP_LABELS[op]!, runner);
 		if (!result.ok) {
 			transitionRequest = new DeferredTransitionRequested(op, result.reason);
@@ -112,11 +111,11 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 		Object.defineProperty(mediated, name, { value, writable: true, configurable: true, enumerable: true });
 	};
 	override("ui", mediatedUI);
-	override("newSession", (opts?: any) => scheduleTransition("newSession", () => ops!.newSession(opts)));
-	override("fork", (entryId: string, opts?: any) => scheduleTransition("fork", () => ops!.fork(entryId, opts)));
-	override("switchSession", (sessionPath: string, opts?: any) => scheduleTransition("switchSession", () => ops!.switchSession(sessionPath, opts)));
-	override("navigateTree", (targetId: string, opts?: any) => scheduleTransition("navigateTree", () => ops!.navigateTree(targetId, opts)));
-	override("reload", () => scheduleTransition("reload", () => ops!.reload()));
+	override("newSession", (opts?: any) => scheduleTransition("newSession", (c) => c.newSession(opts)));
+	override("fork", (entryId: string, opts?: any) => scheduleTransition("fork", (c) => c.fork(entryId, opts)));
+	override("switchSession", (sessionPath: string, opts?: any) => scheduleTransition("switchSession", (c) => c.switchSession(sessionPath, opts)));
+	override("navigateTree", (targetId: string, opts?: any) => scheduleTransition("navigateTree", (c) => c.navigateTree(targetId, opts)));
+	override("reload", () => scheduleTransition("reload", (c) => c.reload()));
 	return {
 		ctx: mediated,
 		clearOwnPendingRawOp: () => rawOpToken !== null && clearPendingRawOp(ctx, rawOpToken),

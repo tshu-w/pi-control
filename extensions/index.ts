@@ -10,13 +10,12 @@
  * Records runtime status only on model switches and context threshold
  * crossings. Messages are appended to history to preserve prompt caches.
  *
- * Uses a private API hack to capture command-only closures from
- * ExtensionRunner.prototype.bindCommandContext, then executes
- * pending session/navigation actions on agent_settled.
+ * Session actions run on agent_settled through an internal bridge command
+ * (see command-actions.ts).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { patchBindCommandContext, runPending, runPendingDeferredInline, clearPending, isArmed, hasPending, hasQueuedAction } from "./command-actions.js";
+import { patchBindCommandContext, runPendingDeferredInline, dispatchPending, registerBridge, clearPending, getRunner, hasQueuedAction } from "./command-actions.js";
 import { registerSessionsRouter } from "./session.js";
 import { registerTreeRouter } from "./tree.js";
 import { registerModelsRouter } from "./model.js";
@@ -34,8 +33,10 @@ export default function (pi: ExtensionAPI) {
 	let lastModel: string | null = null;
 	let lastContextBucket: string | null = null;
 
-	// Patch ExtensionRunner to auto-capture command context actions.
+	// Patch ExtensionRunner to capture it for commands(action='run').
 	const patchOk = patchBindCommandContext();
+
+	registerBridge(pi);
 
 	registerSessionsRouter(pi);
 	registerTreeRouter(pi);
@@ -83,7 +84,7 @@ export default function (pi: ExtensionAPI) {
 	// agent_settled fires only when no auto-retry, compaction retry, or queued
 	// follow-up remains.
 	pi.on("agent_settled", async (_event, ctx) => {
-		if (!hasPending(ctx)) return;
+		if (!hasQueuedAction(ctx)) return;
 		const notify = ctx.hasUI
 			? (msg: string, level: "info" | "warning" | "error") => ctx.ui.notify(msg, level)
 			: undefined;
@@ -92,39 +93,21 @@ export default function (pi: ExtensionAPI) {
 		// after extension handlers return, so an external prompt racing the
 		// settled event already sees the new model.
 		if (await runPendingDeferredInline(ctx, notify)) return;
-		const runtime = {
-			sendFollowUp: async (msg: string) => { await pi.sendUserMessage(msg, { deliverAs: "followUp" }); },
-		};
-		// Session transitions tear down this runner: setTimeout(0) escapes the
-		// emit stack so session replacement never runs inside the settled emit.
-		// runPending additionally awaits ops.waitForIdle() first, so a prompt
-		// that raced the public settled event finishes instead of being torn
-		// down mid-turn by the transition.
-		setTimeout(() => {
-			runPending(ctx, notify, runtime).catch((e) => {
-				if (notify) notify(`pi-control runPending error: ${e}`, "error");
-				else console.error("[pi-control] runPending error:", e);
-			});
-		}, 0);
+		dispatchPending(pi, ctx);
 	});
 
-	// Warn once if patch failed or command context was never bound.
+	// Warn once if commands(action='run') cannot reach Pi's command runner.
 	let warnedOnce = false;
 	pi.on("session_start", async (_event, ctx) => {
-		if (warnedOnce) return;
-		if (!patchOk) {
-			warnedOnce = true;
-			if (ctx.hasUI) ctx.ui.notify("pi-control: Session controls unavailable because runtime integration failed. Use /resume, /new, or /tree manually.", "warning");
-		} else if (!isArmed(ctx)) {
-			warnedOnce = true;
-			if (ctx.hasUI) ctx.ui.notify("pi-control: Session controls unavailable because command context is not ready. Use /resume, /new, or /tree manually.", "warning");
-		}
+		if (warnedOnce || (patchOk && getRunner(ctx))) return;
+		warnedOnce = true;
+		if (ctx.hasUI) ctx.ui.notify("pi-control: commands(action='run') is unavailable in this Pi version.", "warning");
 	});
 
 	// Clear stale pending state on session shutdown. Only unclaimed queued
 	// actions are stale: a transition in flight fires session_shutdown itself
 	// (core emits it before switchSession/reload resolve) and is released by
-	// runPending's finally, not here.
+	// the bridge command's finally, not here.
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (hasQueuedAction(ctx)) {
 			console.warn("[pi-control] session_shutdown fired while a transition was pending; dropping it.");

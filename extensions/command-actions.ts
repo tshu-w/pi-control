@@ -1,78 +1,48 @@
 /**
- * Private API hack: auto-capture command-only closures from ExtensionRunner.
+ * Deferred runtime actions.
  *
- * pi's public API only exposes switchSession/newSession/navigateTree/fork/reload
- * on ExtensionCommandContext (command handlers), not on ExtensionContext (tools/events).
- * We patch ExtensionRunner.prototype.bindCommandContext to capture these closures
- * when the runtime binds them, then execute pending actions on agent_settled.
+ * Tools only receive ExtensionContext, but session changes need the
+ * ExtensionCommandContext of a slash command. Tools record the action and end
+ * the turn; on agent_settled pi-control dispatches its internal bridge command,
+ * whose handler performs the action with its command context.
  *
- * This is the userland polyfill for the session-transition APIs missing from
- * ExtensionContext (upstream pi#2023).
+ * Private API: the commands router needs the ExtensionRunner to call
+ * third-party handlers, so ExtensionRunner.prototype.bindCommandContext is
+ * patched to capture it.
  */
 
-import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { ExtensionRunner, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+
+export const BRIDGE_COMMAND = "pi-control-internal";
 
 // ── Types ───────────────────────────────────────────────────
 
-/**
- * A pending deferred action. Discriminated on `kind`.
- *
- * At most one action can be pending at a time — enforced by `setPending()`.
- * The exhaustive switch in `runPending()` guarantees every kind is handled.
- */
+/** At most one action is pending per session; see scheduleAction(). */
 export type PendingAction =
 	| { kind: "resume"; file: string; message?: string }
 	| { kind: "new"; parentSession?: string; message?: string }
 	| { kind: "nav"; targetId: string; summarize?: boolean; customInstructions?: string; message?: string }
 	| { kind: "fork"; id: string; message?: string }
 	| { kind: "reload"; message?: string }
-	/** Raw op scheduled by the `commands` router when a third-party handler
-	 *  invoked one of the session-transition closures via mediated ctx.
-	 *  The exec closure calls _state.ops.* directly; a `cancelled` result is
-	 *  surfaced as a warning by runPending. */
-	| { kind: "rawOp"; token: symbol; label: string; exec: () => Promise<{ cancelled?: boolean } | void> }
-	/** Public-API work deferred to agent_settled (e.g. model switch). Needs no
-	 *  captured command context. */
+	/** Requested by a third-party handler run through the commands router. */
+	| { kind: "rawOp"; token: symbol; label: string; exec: (ctx: ExtensionCommandContext) => Promise<{ cancelled?: boolean } | void> }
+	/** Public-API work run inline on agent_settled (model switch). */
 	| { kind: "deferred"; label: string; exec: () => Promise<void> };
-
-export interface RuntimeContext {
-	sendFollowUp: (msg: string) => Promise<void>;
-}
-
-export interface CommandOps {
-	switchSession: (sessionPath: string, options?: {
-		withSession?: (ctx: any) => Promise<void>;
-	}) => Promise<{ cancelled: boolean }>;
-	newSession: (options?: {
-		parentSession?: string;
-		setup?: any;
-		withSession?: (ctx: any) => Promise<void>;
-	}) => Promise<{ cancelled: boolean }>;
-	navigateTree: (targetId: string, options?: {
-		summarize?: boolean;
-		customInstructions?: string;
-		replaceInstructions?: boolean;
-		label?: string;
-	}) => Promise<{ cancelled: boolean }>;
-	fork: (entryId: string, options?: {
-		position?: "before" | "at";
-		withSession?: (ctx: any) => Promise<void>;
-	}) => Promise<{ cancelled: boolean }>;
-	reload: () => Promise<void>;
-	/** Resolves when the agent is idle; used to avoid tearing down a turn that
-	 *  raced the public settled event into the settled→timer window. */
-	waitForIdle: () => Promise<void>;
-}
 
 // ── Session-scoped state ────────────────────────────────────
 
 interface CommandState {
-	ops: CommandOps | null;
 	pending: PendingAction | null;
-	/** Set while runPending / runPendingDeferredInline executes an action.
-	 *  Occupies the single slot so nothing schedules a second transition while
-	 *  the first waits for idle or is mid-teardown. */
+	/** Set while an action executes. Occupies the single slot so nothing
+	 *  schedules a second transition while the first is mid-teardown. */
 	inFlight: { kind: string; label: string } | null;
+	/** Token the bridge command must receive; set when it is dispatched. */
+	dispatchToken: string | null;
+	/** Follow-up queued behind the bridge command for navigate and reload.
+	 *  It is the first extension input after the command finishes (`ready`),
+	 *  and the input handler drops it when the action did not happen. */
+	followUp: { ready: boolean; drop: boolean } | null;
 	runner: any;
 }
 
@@ -98,7 +68,7 @@ function stateFor(owner: CommandOwner, create = false): CommandState | undefined
 	const key = ownerKey(owner);
 	let state = registry.states.get(key);
 	if (!state && create) {
-		state = { ops: null, pending: null, inFlight: null, runner: null };
+		state = { pending: null, inFlight: null, dispatchToken: null, followUp: null, runner: null };
 		registry.states.set(key, state);
 	}
 	return state;
@@ -106,14 +76,13 @@ function stateFor(owner: CommandOwner, create = false): CommandState | undefined
 
 // ── Accessors ───────────────────────────────────────────────
 
-export function isArmed(owner: CommandOwner): boolean { return stateFor(owner)?.ops != null; }
 /** True while the session's single slot is occupied — by a scheduled action or
- *  one currently executing (waiting for idle / mid-transition). */
+ *  one currently executing. */
 export function hasPending(owner: CommandOwner): boolean {
 	const state = stateFor(owner);
 	return state?.pending != null || state?.inFlight != null;
 }
-/** True only when an action is scheduled but not yet claimed by runPending. */
+/** True only when an action is scheduled but not yet claimed. */
 export function hasQueuedAction(owner: CommandOwner): boolean { return stateFor(owner)?.pending != null; }
 const KIND_LABELS: Record<string, string> = {
 	resume: "session switch",
@@ -131,7 +100,6 @@ function busyReason(state: CommandState): string | undefined {
 	if (state.pending) return `a ${actionLabel(state.pending)} is already scheduled`;
 	return undefined;
 }
-const UNAVAILABLE = "Session control is unavailable in this Pi runtime.";
 /** The ExtensionRunner instance captured for this session. */
 export function getRunner(owner: CommandOwner): any { return stateFor(owner)?.runner ?? null; }
 
@@ -140,15 +108,7 @@ export function clearPending(owner: CommandOwner): void {
 	if (state) state.pending = null;
 }
 
-/**
- * Router-facing helper: dispatch a pending action.
- *
- * Callers do action-specific validation first, then hand off to scheduleAction
- * which handles the isArmed / hasPending / set / response boilerplate.
- */
 export interface ScheduleParams {
-	/** Next step when session control is unavailable, e.g. "Ask the user to run `/resume`." */
-	fallbackHint: string;
 	/** The action to schedule. */
 	action: PendingAction;
 	/** Success text shown to the model when the action was scheduled. */
@@ -157,11 +117,9 @@ export interface ScheduleParams {
 	details?: Record<string, any>;
 }
 
+/** Router-facing helper: validate the slot, store the action, end the turn. */
 export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any>; terminate: true } {
-	const state = stateFor(owner);
-	if (!state?.ops) {
-		throw new Error(`${UNAVAILABLE} ${params.fallbackHint}`);
-	}
+	const state = stateFor(owner, true)!;
 	const busy = busyReason(state);
 	if (busy) {
 		throw new Error(`Cannot schedule this change: ${busy}. Try again after it takes effect.`);
@@ -174,8 +132,7 @@ export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { c
 	};
 }
 
-/** Schedule public-API work for agent_settled. Unlike scheduleAction this
- *  needs no captured command context. Any pending action rejects the request. */
+/** Schedule public-API work for agent_settled. Any pending action rejects the request. */
 export function scheduleDeferred(owner: CommandOwner, label: string, exec: () => Promise<void>): { ok: true } | { ok: false; reason: string } {
 	const state = stateFor(owner, true)!;
 	const busy = busyReason(state);
@@ -184,11 +141,9 @@ export function scheduleDeferred(owner: CommandOwner, label: string, exec: () =>
 	return { ok: true };
 }
 
-/** Lower-level helper for the commands router: schedule a raw op without the
- *  scheduleAction success-text plumbing. Returns the reason if not armed or busy. */
-export function scheduleRawOp(owner: CommandOwner, label: string, exec: () => Promise<{ cancelled?: boolean } | void>): { ok: true; token: symbol } | { ok: false; reason: string } {
-	const state = stateFor(owner);
-	if (!state?.ops) return { ok: false, reason: "session control is unavailable in this Pi runtime" };
+/** Lower-level helper for the commands router. Returns the reason if busy. */
+export function scheduleRawOp(owner: CommandOwner, label: string, exec: (ctx: ExtensionCommandContext) => Promise<{ cancelled?: boolean } | void>): { ok: true; token: symbol } | { ok: false; reason: string } {
+	const state = stateFor(owner, true)!;
 	const busy = busyReason(state);
 	if (busy) return { ok: false, reason: busy };
 	const token = Symbol(label);
@@ -207,9 +162,6 @@ export function clearPendingRawOp(owner: CommandOwner, token: symbol): boolean {
 	return true;
 }
 
-/** Access to the captured ops for one session. */
-export function getOps(owner: CommandOwner): CommandOps | null { return stateFor(owner)?.ops ?? null; }
-
 // ── Patch ───────────────────────────────────────────────────
 
 export function patchBindCommandContext(): boolean {
@@ -219,18 +171,9 @@ export function patchBindCommandContext(): boolean {
 		if (typeof current !== "function") return false;
 
 		ExtensionRunner.prototype.bindCommandContext = function (actions: any) {
-			const state = stateFor(this, true)!;
-			state.ops = actions ? {
-				switchSession: actions.switchSession,
-				newSession: actions.newSession,
-				navigateTree: actions.navigateTree,
-				fork: actions.fork,
-				reload: actions.reload,
-				waitForIdle: actions.waitForIdle,
-			} : null;
-			// Capture runner instance so the commands router can call
-			// getCommand() / createCommandContext() without a separate hook.
-			state.runner = actions ? this : null;
+			// Capture the runner so the commands router can call getCommand() /
+			// createCommandContext().
+			stateFor(this, true)!.runner = actions ? this : null;
 			return current.call(this, actions);
 		};
 		registry.patched = true;
@@ -242,16 +185,14 @@ export function patchBindCommandContext(): boolean {
 
 // ── Execute pending actions ─────────────────────────────────
 
+type Notify = (msg: string, level: "info" | "warning" | "error") => void;
+
 /** Run a pending "deferred" action inline, inside the agent_settled emit.
  *  Core publishes settled to SDK/RPC/UI listeners and resolves idle only
  *  after extension handlers return, so awaiting the model switch here closes
  *  the race where an external prompt starts the next turn on the old model.
- *  Session-transition kinds are left pending for the timer path (they must
- *  escape the emit stack). Returns true when a deferred action was consumed. */
-export async function runPendingDeferredInline(
-	owner: CommandOwner,
-	notify?: (msg: string, level: "info" | "warning" | "error") => void,
-): Promise<boolean> {
+ *  Returns true when a deferred action was consumed. */
+export async function runPendingDeferredInline(owner: CommandOwner, notify?: Notify): Promise<boolean> {
 	const state = stateFor(owner);
 	if (state?.pending?.kind !== "deferred") return false;
 	const action = state.pending;
@@ -269,39 +210,69 @@ export async function runPendingDeferredInline(
 	return true;
 }
 
-export async function runPending(
-	owner: CommandOwner,
-	notify?: (msg: string, level: "info" | "warning" | "error") => void,
-	runtime?: RuntimeContext,
-): Promise<void> {
-	// Claim the action into inFlight: the session's single slot stays occupied
-	// for the whole execution (idle wait included).
-	// Deferred actions run inline on agent_settled; leave one scheduled by a
-	// racing turn for its own settled event.
+/** Called from agent_settled: dispatch the bridge command for a pending
+ *  session action. Messages sent during agent_settled run in order after all
+ *  settled handlers finish, and single-shot modes wait for them, so a
+ *  navigate or reload follow-up is queued right behind the command. */
+export function dispatchPending(pi: ExtensionAPI, owner: CommandOwner): void {
 	const state = stateFor(owner);
 	const action = state?.pending;
 	if (!state || !action || action.kind === "deferred") return;
-	state.pending = null;
-	state.inFlight = { kind: action.kind, label: actionLabel(action) };
-	try {
-		await dispatchPending(state, action, notify, runtime);
-	} finally {
-		state.inFlight = null;
+	state.dispatchToken = randomUUID();
+	pi.sendUserMessage(`/${BRIDGE_COMMAND} ${state.dispatchToken}`, { expandPromptTemplates: true });
+	if ((action.kind === "nav" || action.kind === "reload") && action.message) {
+		state.followUp = { ready: false, drop: false };
+		pi.sendUserMessage(action.message);
 	}
 }
 
-async function dispatchPending(
-	state: CommandState,
-	action: Exclude<PendingAction, { kind: "deferred" }>,
-	notify?: (msg: string, level: "info" | "warning" | "error") => void,
-	runtime?: RuntimeContext,
-): Promise<void> {
-	const reportError = (message: string, error?: unknown) => {
-		if (notify) {
-			notify(error === undefined ? message : `${message}: ${error}`, "error");
-			return;
-		}
-		if (error === undefined) console.error(`[pi-control] ${message}`);
+export function registerBridge(pi: ExtensionAPI): void {
+	pi.registerCommand(BRIDGE_COMMAND, {
+		description: "Internal step of pi-control tools; does nothing when run by hand",
+		handler: async (args, ctx) => {
+			const state = stateFor(ctx);
+			if (!state?.dispatchToken || args.trim() !== state.dispatchToken) return;
+			state.dispatchToken = null;
+			const action = state.pending;
+			if (!action || action.kind === "deferred") return;
+			state.pending = null;
+			state.inFlight = { kind: action.kind, label: actionLabel(action) };
+			const notify: Notify | undefined = ctx.hasUI ? (msg, level) => ctx.ui.notify(msg, level) : undefined;
+			let done = false;
+			try {
+				// A prompt that raced the settled event finishes before the
+				// session is replaced.
+				await ctx.waitForIdle();
+				done = await runAction(ctx, action, notify);
+			} finally {
+				state.inFlight = null;
+				if (state.followUp) state.followUp = { ready: true, drop: !done };
+			}
+		},
+	});
+
+	// Drop the queued navigate/reload follow-up when the action did not happen.
+	// Match by position: earlier input handlers may have transformed its text.
+	pi.on("input", (event, ctx) => {
+		if (event.source !== "extension") return;
+		const state = stateFor(ctx);
+		const followUp = state?.followUp;
+		if (!followUp?.ready) return;
+		state.followUp = null;
+		if (followUp.drop) return { action: "handled" };
+	});
+	// An earlier input handler may have consumed the follow-up; any later run
+	// means its turn has passed.
+	pi.on("agent_start", (_event, ctx) => {
+		const state = stateFor(ctx);
+		if (state?.followUp?.ready) state.followUp = null;
+	});
+}
+
+/** Returns true when the action took effect. */
+async function runAction(ctx: ExtensionCommandContext, action: Exclude<PendingAction, { kind: "deferred" }>, notify?: Notify): Promise<boolean> {
+	const reportError = (message: string, error: unknown) => {
+		if (notify) notify(`${message}: ${error}`, "error");
 		else console.error(`[pi-control] ${message}:`, error);
 	};
 	// Cancellations must stay observable in headless (RPC/SDK) runs too, where
@@ -310,19 +281,14 @@ async function dispatchPending(
 		if (notify) notify(message, "warning");
 		else console.warn(`[pi-control] ${message}`);
 	};
-
-	const ops = state.ops;
-	if (!ops) return;
-
-	// A prompt may have raced the public settled event into the settled→timer
-	// window and started a new turn. Wait for the agent to go idle again so the
-	// transition lands on a turn boundary instead of tearing down a running
-	// turn (dispose/abort) mid-flight. A TOCTOU window remains between this
-	// resolve and the transition's first await — closing it fully needs an
-	// upstream pre-publication seam; this is the best a pure extension can do.
-	await ops.waitForIdle();
-
-	// Builds a withSession option that sends `message` in the replaced session.
+	const done = (result: { cancelled?: boolean } | void, cancelledMessage: string) => {
+		if (result && result.cancelled) {
+			reportWarning(cancelledMessage);
+			return false;
+		}
+		return true;
+	};
+	// Sends `message` in the replaced session.
 	const withMessage = (message: string | undefined) => {
 		if (!message) return undefined;
 		return async (newCtx: any) => {
@@ -330,87 +296,32 @@ async function dispatchPending(
 		};
 	};
 
-	switch (action.kind) {
-		case "resume": {
-			try {
-				const opts: any = {};
-				const ws = withMessage(action.message);
-				if (ws) opts.withSession = ws;
-				const r = await ops.switchSession(action.file, opts);
-				if (r.cancelled) reportWarning("Session switch cancelled");
-			} catch (e) { reportError("Session switch failed", e); }
-			return;
-		}
-
-		case "new": {
-			try {
-				const opts: any = { parentSession: action.parentSession };
-				const ws = withMessage(action.message);
-				if (ws) opts.withSession = ws;
-				const r = await ops.newSession(opts);
-				if (r.cancelled) reportWarning("New session cancelled");
-			} catch (e) { reportError("New session failed", e); }
-			return;
-		}
-
-		case "nav": {
-			try {
-				const r = await ops.navigateTree(action.targetId, {
+	try {
+		switch (action.kind) {
+			case "resume":
+				return done(await ctx.switchSession(action.file, { withSession: withMessage(action.message) }), "Session switch cancelled");
+			case "new":
+				return done(await ctx.newSession({ parentSession: action.parentSession, withSession: withMessage(action.message) }), "New session cancelled");
+			case "nav":
+				return done(await ctx.navigateTree(action.targetId, {
 					summarize: action.summarize,
 					customInstructions: action.customInstructions,
-				});
-				if (r.cancelled) reportWarning("Navigation cancelled");
-				else if (action.message && runtime) await runtime.sendFollowUp(action.message);
-			} catch (e) { reportError("Navigation failed", e); }
-			return;
+				}), "Navigation cancelled");
+			case "fork":
+				return done(await ctx.fork(action.id, { withSession: withMessage(action.message) }), "Fork cancelled");
+			case "reload":
+				await ctx.reload();
+				return true;
+			case "rawOp":
+				return done(await action.exec(ctx), `Command-triggered ${action.label} cancelled`);
+			default: {
+				const _exhaustive: never = action;
+				return _exhaustive;
+			}
 		}
-
-		case "fork": {
-			try {
-				const opts: any = {};
-				const ws = withMessage(action.message);
-				if (ws) opts.withSession = ws;
-				const r = await ops.fork(action.id, opts);
-				if (r.cancelled) reportWarning("Fork cancelled");
-			} catch (e) { reportError("Fork failed", e); }
-			return;
-		}
-
-		case "reload": {
-			try {
-				await ops.reload();
-				if (action.message) {
-					// After reload, the shared runner slot is re-captured by the
-					// prototype patch during _buildRuntime. Use the fresh extension
-					// runtime so the message goes through the new session, not the
-					// stale pre-reload pi closure. createCommandContext() intentionally
-					// does not expose sendUserMessage except for replaced-session callbacks.
-					try {
-						const sendUserMessage = state.runner?.runtime?.sendUserMessage;
-						if (typeof sendUserMessage !== "function") throw new Error("fresh runtime has no sendUserMessage");
-						await Promise.resolve(sendUserMessage(action.message, { deliverAs: "followUp" }));
-					} catch (e) {
-						reportError("Post-reload message delivery failed", e);
-					}
-				}
-			} catch (e) { reportError("Reload failed", e); }
-			return;
-		}
-
-		case "rawOp": {
-			try {
-				const r = await action.exec();
-				if (r && typeof r === "object" && (r as { cancelled?: boolean }).cancelled) {
-					reportWarning(`Command-triggered ${action.label} cancelled`);
-				}
-			} catch (e) { reportError(`Command-triggered ${action.label} failed`, e); }
-			return;
-		}
-
-		default: {
-			// Exhaustiveness: if a new kind is added without a case, TS surfaces it here.
-			const _exhaustive: never = action;
-			return _exhaustive;
-		}
+	} catch (e) {
+		const label = actionLabel(action);
+		reportError(action.kind === "rawOp" ? `Command-triggered ${label} failed` : `${label[0]!.toUpperCase()}${label.slice(1)} failed`, e);
+		return false;
 	}
 }

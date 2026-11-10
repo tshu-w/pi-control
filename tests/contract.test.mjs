@@ -1,13 +1,9 @@
-// Contract test for the private-API surface pi-control depends on.
-// If a pi upgrade renames or reshapes these, this file fails first —
-// before resume/new/navigate/fork silently degrade at runtime.
+// Contract test for the private-API surface pi-control depends on: the
+// commands router calls third-party handlers through the ExtensionRunner.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
-import { patchBindCommandContext, isArmed, getOps, getRunner } from "../extensions/command-actions.ts";
+import { patchBindCommandContext, getRunner } from "../extensions/command-actions.ts";
 
 const fakeActions = () => ({
 	switchSession: async () => ({ cancelled: false }),
@@ -24,43 +20,13 @@ test("ExtensionRunner still exposes the patched/used private methods", () => {
 	}
 });
 
-test("pi still exposes the agent_settled extension event", () => {
-	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-	const types = readFileSync(path.join(path.dirname(entry), "core", "extensions", "types.d.ts"), "utf8");
-	// Deferred transitions run on agent_settled; if pi renames or drops the
-	// event, they would silently never fire.
-	assert.match(types, /"agent_settled"/, "agent_settled missing from pi extension types — deferred transitions would never fire");
-});
-
-test("patch captures ops and runner when pi binds the command context", () => {
+test("patch captures the runner when pi binds the command context", () => {
 	assert.equal(patchBindCommandContext(), true);
 	const sessionManager = {};
-	assert.equal(isArmed(sessionManager), false, "must not be armed before binding");
-
-	const runner = { marker: "fake-runner", sessionManager };
-	const actions = fakeActions();
-	ExtensionRunner.prototype.bindCommandContext.call(runner, actions);
-
-	assert.equal(isArmed(sessionManager), true);
-	assert.equal(getRunner(sessionManager), runner, "runner instance must be captured");
-	const ops = getOps(sessionManager);
-	for (const key of ["switchSession", "newSession", "navigateTree", "fork", "reload", "waitForIdle"]) {
-		assert.equal(ops[key], actions[key], `ops.${key} must be the closure pi passed in`);
-	}
-});
-
-test("upstream message APIs keep their awaited/void shapes", () => {
-	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-	const types = readFileSync(path.join(path.dirname(entry), "core", "extensions", "types.d.ts"), "utf8");
-	// runPending awaits waitForIdle before transitions so a turn that raced the
-	// public settled event finishes instead of being torn down mid-flight.
-	assert.match(types, /waitForIdle: \(\) => Promise<void>;/, "ExtensionCommandContextActions.waitForIdle missing \u2014 transition idle-gating would silently disable");
-	// ExtensionAPI.sendUserMessage is fire-and-forget (returns void): several
-	// routers document asynchronous delivery because of this. If it becomes
-	// awaitable, upgrade queue_message/nav/compact/reload/model-handoff delivery.
-	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";[^}]*\}\): void;/, "ExtensionAPI.sendUserMessage is no longer void \u2014 upgrade to awaited delivery");
-	// resume/new/fork followUp delivery awaits the replaced-session context API.
-	assert.match(types, /sendUserMessage\(content: string \| \(TextContent \| ImageContent\)\[\], options\?: \{\s*deliverAs\?: "steer" \| "followUp";[^}]*\}\): Promise<void>;/, "ReplacedSessionContext.sendUserMessage no longer returns a Promise");
+	assert.equal(getRunner(sessionManager), null);
+	const runner = { sessionManager };
+	ExtensionRunner.prototype.bindCommandContext.call(runner, fakeActions());
+	assert.equal(getRunner(sessionManager), runner);
 });
 
 test("original bindCommandContext behavior is preserved (handlers land on the runner)", () => {
@@ -69,16 +35,14 @@ test("original bindCommandContext behavior is preserved (handlers land on the ru
 	ExtensionRunner.prototype.bindCommandContext.call(runner, actions);
 	// pi's original implementation stores the closures on the instance; if this
 	// stops holding, the patch may be swallowing the original call.
-	const stored = Object.values(runner);
-	assert.ok(stored.includes(actions.switchSession), "original implementation no longer receives the actions");
+	assert.ok(Object.values(runner).includes(actions.switchSession), "original implementation no longer receives the actions");
 });
 
-test("binding null disarms only its own session and drops its runner", () => {
-	const firstSessionManager = {};
-	const secondSessionManager = {};
-	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: firstSessionManager }, fakeActions());
-	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: secondSessionManager }, null);
-	assert.equal(isArmed(firstSessionManager), true);
-	assert.equal(isArmed(secondSessionManager), false);
-	assert.equal(getRunner(secondSessionManager), null);
+test("binding null drops only its own session's runner", () => {
+	const first = { sessionManager: {} };
+	const second = { sessionManager: {} };
+	ExtensionRunner.prototype.bindCommandContext.call(first, fakeActions());
+	ExtensionRunner.prototype.bindCommandContext.call(second, null);
+	assert.equal(getRunner(first.sessionManager), first);
+	assert.equal(getRunner(second.sessionManager), null);
 });

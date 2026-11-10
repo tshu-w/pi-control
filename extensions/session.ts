@@ -167,7 +167,6 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						throw new Error(`Session path is not a .jsonl file: ${params.sessionFile}`);
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Ask the user to run `/resume`.",
 						action: { kind: "resume", file: params.sessionFile, message: params.message },
 						successText: `Scheduled session switch to: ${params.sessionFile}${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "resume", sessionFile: params.sessionFile, messageScheduled: params.message !== undefined },
@@ -183,7 +182,6 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					const linkParent = params.linkParent ?? true;
 					const parentSession = linkParent ? currentFile ?? undefined : undefined;
 					return scheduleAction(ctx, {
-						fallbackHint: "Ask the user to run `/new`.",
 						action: { kind: "new", parentSession, message: params.message },
 						successText: `Scheduled new session creation${params.message ? " (with follow-up message)" : ""}.`,
 						details: {
@@ -232,7 +230,6 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						throw new Error("`message` must contain at least one non-whitespace character when provided.");
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Ask the user to run `/reload`.",
 						action: { kind: "reload", message: params.message },
 						successText: `Scheduled runtime reload${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "reload", messageScheduled: params.message !== undefined },

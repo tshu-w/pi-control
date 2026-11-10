@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { registerModelsRouter } = await jiti.import("../extensions/model.ts");
 const { registerSessionsRouter } = await jiti.import("../extensions/session.ts");
 const { registerTreeRouter } = await jiti.import("../extensions/tree.ts");
-const { patchBindCommandContext, hasPending, runPending } = await jiti.import("../extensions/command-actions.ts");
+const { hasPending, hasQueuedAction, clearPending } = await jiti.import("../extensions/command-actions.ts");
 
 function register(router, overrides = {}) {
 	let tool;
@@ -29,16 +28,6 @@ function treeContext() {
 		getLeafId: () => "entry-1",
 		getSessionFile: () => undefined,
 	} };
-}
-
-function arm(ctx, calls) {
-	patchBindCommandContext();
-	const record = (kind) => async (...args) => { calls.push([kind, ...args]); return { cancelled: false }; };
-	ExtensionRunner.prototype.bindCommandContext.call({ sessionManager: ctx.sessionManager }, {
-		switchSession: record("resume"), newSession: record("new"),
-		navigateTree: record("navigate"), fork: record("fork"), reload: record("reload"),
-		waitForIdle: async () => {},
-	});
 }
 
 test("models reject invalid requests and unresolved targets before scheduling or consulting", async () => {
@@ -111,13 +100,6 @@ test("transition rejection preserves the previously scheduled operation", async 
 	const tree = register(registerTreeRouter);
 	const models = register(registerModelsRouter);
 	const ctx = treeContext();
-	await assert.rejects(sessions({ action: "new" }, ctx), /Session control is unavailable.*\/new/);
-	await assert.rejects(sessions({ action: "reload" }, ctx), /Session control is unavailable.*\/reload/);
-	await assert.rejects(tree({ action: "navigate", entryId: "entry-2" }, ctx), /Session control is unavailable.*\/tree/);
-	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Session control is unavailable.*\/fork/);
-	assert.equal(hasPending(ctx), false);
-	const calls = [];
-	arm(ctx, calls);
 	const scheduled = await sessions({ action: "reload" }, ctx);
 	assert.equal(scheduled.details.scheduled, "reload");
 	await assert.rejects(sessions({ action: "new" }, ctx), /Cannot schedule this change: a reload is already scheduled/);
@@ -129,8 +111,7 @@ test("transition rejection preserves the previously scheduled operation", async 
 		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test" }),
 	};
 	await assert.rejects(models({ action: "switch", modelId: "one/model" }, ctx), /Cannot schedule the model switch: a reload is already scheduled/);
-	assert.equal(hasPending(ctx), true);
-	await runPending(ctx);
-	assert.deepEqual(calls, [["reload"]]);
+	assert.equal(hasQueuedAction(ctx), true);
+	clearPending(ctx);
 	assert.equal(hasPending(ctx), false);
 });

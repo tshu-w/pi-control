@@ -1,309 +1,226 @@
-// State machine tests for the deferred-action layer, driven with recording
-// fakes in place of pi's real session-transition closures.
+// Deferred-action layer: scheduling, the agent_settled bridge command, and
+// the queued navigate/reload follow-up, driven with recording fakes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import {
-	patchBindCommandContext, scheduleAction, scheduleRawOp, scheduleDeferred, isPendingRawOp, clearPendingRawOp,
-	runPending, runPendingDeferredInline, clearPending, hasPending, hasQueuedAction, isArmed, getRunner,
+	BRIDGE_COMMAND, patchBindCommandContext, registerBridge, dispatchPending, scheduleAction, scheduleRawOp, scheduleDeferred,
+	runPendingDeferredInline, clearPending, hasPending, hasQueuedAction, getRunner,
 } from "../extensions/command-actions.ts";
 
-const calls = [];
-const notes = [];
-const notify = (msg, level) => notes.push([level, msg]);
 const owner = {};
-const fakeRunner = { sessionManager: owner, runtime: { sendUserMessage: (msg, opts) => calls.push(["sendUserMessage", msg, opts]) } };
+const schedule = (action, target = owner) => scheduleAction(target, { action, successText: "scheduled", details: {} });
 
-let behavior = { cancelled: false, throwError: null, gate: null, idleGate: null };
-const record = (name) => async (...args) => {
-	calls.push([name, ...args]);
-	if (behavior.gate) await behavior.gate;
-	if (behavior.throwError) throw behavior.throwError;
-	return { cancelled: behavior.cancelled };
-};
-const actions = {
-	switchSession: record("switchSession"),
-	newSession: record("newSession"),
-	navigateTree: record("navigateTree"),
-	fork: record("fork"),
-	reload: async () => { calls.push(["reload"]); },
-	waitForIdle: async () => { if (behavior.idleGate) await behavior.idleGate; },
-};
-
-const reset = () => { calls.length = 0; notes.length = 0; behavior = { cancelled: false, throwError: null, gate: null, idleGate: null }; clearPending(owner); };
-const schedule = (action) => scheduleAction(owner, { fallbackHint: "Ask the user to run `/x`.", action, successText: "scheduled", details: {} });
-
-test("unarmed scheduling throws with the built-in hint", () => {
-	assert.equal(isArmed(owner), false);
-	assert.throws(() => schedule({ kind: "resume", file: "/tmp/a.jsonl" }), /Session control is unavailable.*Ask the user to run `\/x`/);
-	assert.equal(hasPending(owner), false);
-});
-
-test("deferred: runs unarmed, rejects a second deferred, blocked by other kinds", async () => {
-	assert.equal(isArmed(owner), false, "deferred tests must run before the patch arms ops");
-	assert.equal(scheduleDeferred(owner, "switch-a", async () => calls.push(["deferred-a"])).ok, true, "deferred needs no command context");
-	assert.deepEqual(scheduleDeferred(owner, "switch-b", async () => calls.push(["deferred-b"])), {
-		ok: false,
-		reason: "a switch-a is already scheduled",
-	}, "a later deferred must not drop the pending one");
-	await runPending(owner, notify);
-	assert.deepEqual(calls, [], "runPending leaves deferred actions to the settled handler");
-	assert.equal(await runPendingDeferredInline(owner, notify), true);
-	assert.deepEqual(calls, [["deferred-a"]], "the first deferred runs, without ops");
-	assert.equal(hasPending(owner), false);
-
-	calls.length = 0;
-	behavior.throwError = null;
-	const failing = scheduleDeferred(owner, "switch-fail", async () => { throw new Error("boom"); });
-	assert.equal(failing.ok, true);
-	await runPendingDeferredInline(owner, notify);
-	assert.equal(notes[0][0], "error");
-	assert.equal(hasPending(owner), false);
-	notes.length = 0;
-});
-
-test("deferred inline: switch completes inside the settled emit, before external listeners", async () => {
-	// Mirrors core _emitAgentSettled ordering (agent-session.js:314-321):
-	// `await extensionRunner.emit(agent_settled)` runs our handler to
-	// completion, THEN external SDK/RPC/UI listeners hear settled and may
-	// prompt immediately. The switch must be done by that point.
-	let model = "old";
-	const events = [];
-	assert.equal(scheduleDeferred(owner, "model switch", async () => {
-		await Promise.resolve();
-		model = "new";
-	}).ok, true);
-	const extensionEmit = async () => {
-		assert.equal(await runPendingDeferredInline(owner, notify), true, "inline path must consume the deferred action");
+function bridge() {
+	const handlers = {};
+	const commands = {};
+	const sent = [];
+	const pi = {
+		on: (event, handler) => { (handlers[event] ??= []).push(handler); },
+		registerCommand: (name, options) => { commands[name] = options; },
+		sendUserMessage: (text, options) => { sent.push([text, options]); },
 	};
-	await extensionEmit();
-	events.push(["external-listener-prompt", model]);
-	assert.deepEqual(events, [["external-listener-prompt", "new"]], "a prompt racing the settled event must already see the new model");
+	registerBridge(pi);
+	const calls = [];
+	const notes = [];
+	let behavior = {};
+	const record = (name) => async (...args) => {
+		calls.push([name, ...args]);
+		if (behavior.gate) await behavior.gate;
+		if (behavior.throwError) throw behavior.throwError;
+		return { cancelled: !!behavior.cancelled };
+	};
+	const ctx = (sessionManager = owner, hasUI = false) => ({
+		sessionManager,
+		hasUI,
+		ui: { notify: (message, level) => notes.push([level, message]) },
+		waitForIdle: async () => { calls.push(["waitForIdle"]); },
+		switchSession: record("switchSession"),
+		newSession: record("newSession"),
+		navigateTree: record("navigateTree"),
+		fork: record("fork"),
+		reload: async () => { calls.push(["reload"]); if (behavior.throwError) throw behavior.throwError; },
+	});
+	const settle = (sessionManager = owner) => {
+		const start = sent.length;
+		dispatchPending(pi, { sessionManager });
+		return sent.slice(start);
+	};
+	const run = (args, commandCtx = ctx()) => commands[BRIDGE_COMMAND].handler(args, commandCtx);
+	const input = (text, source = "extension", sessionManager = owner) => handlers.input[0]({ type: "input", text, source }, { sessionManager });
+	const agentStart = (sessionManager = owner) => handlers.agent_start[0]({ type: "agent_start" }, { sessionManager });
+	return { commands, calls, notes, ctx, settle, run, input, agentStart, set: (value) => { behavior = value; } };
+}
+
+const tokenOf = ([[text]]) => text.split(" ")[1];
+
+test("scheduled actions end the turn; a second schedule is rejected", () => {
+	const result = schedule({ kind: "resume", file: "/tmp/a.jsonl" });
+	assert.equal(result.terminate, true);
+	assert.throws(() => schedule({ kind: "reload" }), /Cannot schedule this change: a session switch is already scheduled\. Try again after it takes effect\./);
+	assert.deepEqual(scheduleDeferred(owner, "model switch to a/b", async () => {}), { ok: false, reason: "a session switch is already scheduled" });
+	assert.equal(scheduleRawOp(owner, "reload", async () => {}).ok, false);
+	clearPending(owner);
+});
+
+test("settle dispatches the bridge command, which runs the action once", async () => {
+	const b = bridge();
+	assert.match(b.commands[BRIDGE_COMMAND].description, /Internal.*does nothing when run by hand/);
+	schedule({ kind: "resume", file: "/tmp/a.jsonl", message: "next" });
+	const sent = b.settle();
+	assert.equal(sent.length, 1, "resume sends its follow-up inside the replaced session");
+	assert.match(sent[0][0], new RegExp(`^/${BRIDGE_COMMAND} [0-9a-f-]{36}$`));
+	assert.deepEqual(sent[0][1], { expandPromptTemplates: true });
+
+	await b.run(tokenOf(sent));
+	assert.deepEqual(b.calls.map(([name]) => name), ["waitForIdle", "switchSession"]);
+	assert.equal(b.calls[1][1], "/tmp/a.jsonl");
+	const replaced = [];
+	await b.calls[1][2].withSession({ sendUserMessage: async (text) => replaced.push(text) });
+	assert.deepEqual(replaced, ["next"]);
 	assert.equal(hasPending(owner), false);
 
-	// Inline failure notifies instead of throwing into the emit.
-	scheduleDeferred(owner, "bad switch", async () => { throw new Error("boom"); });
-	assert.equal(await runPendingDeferredInline(owner, notify), true);
-	assert.equal(notes.at(-1)[0], "error");
-	notes.length = 0;
+	await b.run(tokenOf(sent));
+	assert.equal(b.calls.length, 2, "a used token runs nothing");
+});
 
-	// Session-transition kinds are not consumed inline; they need the timer.
-	patchBindCommandContext();
-	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
+test("typed by hand, the bridge command does nothing", async () => {
+	const b = bridge();
 	schedule({ kind: "reload" });
-	assert.equal(await runPendingDeferredInline(owner, notify), false, "session transitions stay pending for the timer path");
-	assert.equal(hasPending(owner), true);
-	clearPending(owner);
-});
-
-test("single pending slot: second schedule is rejected", () => {
-	patchBindCommandContext();
-	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
-	assert.equal(isArmed(owner), true);
-
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	assert.equal(hasPending(owner), true);
-	assert.throws(() => schedule({ kind: "reload" }), /already scheduled/);
-	clearPending(owner);
-});
-
-test("session bindings and pending slots are isolated", async () => {
-	reset();
-	const otherOwner = {};
-	const otherRunner = { sessionManager: otherOwner };
-	ExtensionRunner.prototype.bindCommandContext.call(otherRunner, undefined);
-	assert.equal(isArmed(owner), true, "binding another session must not disarm the first");
-	assert.equal(isArmed(otherOwner), false);
-
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	await runPending(otherOwner, notify);
-	assert.equal(hasPending(owner), true, "another session cannot consume this session's action");
-	await runPending(owner, notify);
-	assert.equal(hasPending(owner), false);
-});
-
-test("runPending dispatches and consumes", async () => {
-	reset();
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	await runPending(owner, notify);
-	assert.deepEqual(calls[0].slice(0, 2), ["switchSession", "/tmp/a.jsonl"]);
-	assert.equal(hasPending(owner), false);
-	assert.equal(notes.length, 0, "no notifications on success");
-});
-
-test("single slot covers in-flight execution: no scheduling while a transition runs", async () => {
-	reset();
-	let release;
-	behavior.gate = new Promise((r) => { release = r; });
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	const running = runPending(owner, notify);
-
-	// The in-flight action must keep the slot occupied.
-	assert.equal(hasPending(owner), true, "in-flight transition must occupy the slot");
-	assert.throws(() => schedule({ kind: "reload" }), /a session switch is in progress/);
-	assert.equal(scheduleRawOp(owner, "op", async () => {}).ok, false, "rawOp must be rejected while in flight");
-	assert.equal(scheduleDeferred(owner, "switch", async () => {}).ok, false, "deferred must be rejected while in flight");
-
-	release();
-	await running;
-	assert.equal(hasPending(owner), false, "slot must be free after completion");
-	schedule({ kind: "reload" });
-	assert.equal(hasPending(owner), true, "scheduling must work again after completion");
-	clearPending(owner);
-});
-
-test("shutdown cleanup distinguishes queued actions from in-flight execution", async () => {
-	reset();
-	// A transition in flight triggers session_shutdown itself (core emits it
-	// before switchSession/reload resolve). The shutdown handler must not see
-	// it as a stale queued action, and clearPending must not release the slot.
-	let release;
-	behavior.gate = new Promise((r) => { release = r; });
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	const running = runPending(owner, notify);
-
-	assert.equal(hasQueuedAction(owner), false, "in-flight transition is not a stale queued action");
-	clearPending(owner);
-	assert.equal(hasPending(owner), true, "shutdown cleanup must not release the in-flight slot");
-
-	release();
-	await running;
-	assert.deepEqual(calls[0].slice(0, 2), ["switchSession", "/tmp/a.jsonl"], "the in-flight transition still completes");
-	assert.equal(hasPending(owner), false);
-
-	// A genuinely queued (unclaimed) action is stale and must be cleared.
-	schedule({ kind: "reload" });
+	await b.run("");
+	b.settle();
+	await b.run("00000000-0000-0000-0000-000000000000");
+	assert.deepEqual(b.calls, []);
 	assert.equal(hasQueuedAction(owner), true);
 	clearPending(owner);
-	assert.equal(hasQueuedAction(owner), false);
+});
+
+test("navigate and reload queue the follow-up behind the command and drop it when the action fails", async () => {
+	const b = bridge();
+	schedule({ kind: "nav", targetId: "entry-1", message: "go on" });
+	let sent = b.settle();
+	assert.deepEqual(sent[1], ["go on", undefined]);
+	await b.run(tokenOf(sent));
+	assert.deepEqual(b.calls[1].slice(0, 2), ["navigateTree", "entry-1"]);
+	assert.equal(b.input("go on"), undefined, "the follow-up passes after a successful navigation");
+
+	b.set({ cancelled: true });
+	schedule({ kind: "nav", targetId: "entry-1", message: "go on" });
+	sent = b.settle();
+	const run = b.run(tokenOf(sent));
+	assert.equal(b.input("sent while navigating"), undefined, "input before the command finishes is untouched");
+	await run;
+	assert.equal(b.input("go on", "rpc"), undefined, "other sources are untouched");
+	assert.deepEqual(b.input("prefix: go on"), { action: "handled" }, "the follow-up is dropped after a cancelled navigation, even if transformed");
+	assert.equal(b.input("go on"), undefined, "only the queued follow-up is dropped");
+
+	schedule({ kind: "nav", targetId: "entry-1", message: "go on" });
+	await b.run(tokenOf(b.settle()));
+	b.agentStart();
+	assert.equal(b.input("unrelated"), undefined, "a follow-up consumed by an earlier input handler leaves no state behind");
+
+	b.set({ throwError: new Error("boom") });
+	schedule({ kind: "reload", message: "after reload" });
+	sent = b.settle();
+	assert.deepEqual(sent[1], ["after reload", undefined]);
+	await b.run(tokenOf(sent));
+	assert.deepEqual(b.input("after reload"), { action: "handled" }, "the follow-up is dropped after a failed reload");
 	assert.equal(hasPending(owner), false);
 });
 
-test("cancelled transitions notify as warning", async () => {
-	reset();
-	behavior.cancelled = true;
-	schedule({ kind: "fork", id: "abc" });
-	await runPending(owner, notify);
-	assert.equal(notes.length, 1);
-	assert.equal(notes[0][0], "warning");
-	assert.equal(hasPending(owner), false, "slot must be released after cancellation");
+test("the slot stays occupied while the action runs, and shutdown cleanup keeps it", async () => {
+	const b = bridge();
+	let release;
+	b.set({ gate: new Promise((resolve) => { release = resolve; }) });
+	schedule({ kind: "fork", id: "entry-1" });
+	const running = b.run(tokenOf(b.settle()));
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(hasQueuedAction(owner), false, "an in-flight action is not a stale queued action");
+	clearPending(owner);
+	assert.throws(() => schedule({ kind: "reload" }), /a fork is in progress/);
+	release();
+	await running;
+	assert.equal(hasPending(owner), false);
 });
 
-test("failures notify as error", async () => {
-	reset();
-	behavior.throwError = new Error("boom");
+test("cancellations and failures are reported", async () => {
+	const b = bridge();
+	b.set({ cancelled: true });
 	schedule({ kind: "new" });
-	await runPending(owner, notify);
-	assert.equal(notes[0][0], "error");
-	assert.match(notes[0][1], /boom/);
-	assert.equal(hasPending(owner), false, "slot must be released after failure");
+	await b.run(tokenOf(b.settle()), b.ctx(owner, true));
+	b.set({ throwError: new Error("boom") });
+	schedule({ kind: "fork", id: "entry-1" });
+	await b.run(tokenOf(b.settle()), b.ctx(owner, true));
+	assert.deepEqual(b.notes, [["warning", "New session cancelled"], ["error", "Fork failed: Error: boom"]]);
+
+	const warns = [];
+	const origWarn = console.warn;
+	console.warn = (...args) => warns.push(args.join(" "));
+	try {
+		b.set({ cancelled: true });
+		schedule({ kind: "resume", file: "/tmp/a.jsonl" });
+		await b.run(tokenOf(b.settle()));
+	} finally { console.warn = origWarn; }
+	assert.deepEqual(warns, ["[pi-control] Session switch cancelled"], "headless runs report on the console");
+});
+
+test("command-requested transitions run with the bridge command context", async () => {
+	const b = bridge();
+	const commandCtx = b.ctx();
+	let received;
+	assert.equal(scheduleRawOp(owner, "new session", async (c) => { received = c; return { cancelled: false }; }).ok, true);
+	await b.run(tokenOf(b.settle()), commandCtx);
+	assert.equal(received, commandCtx);
+	assert.equal(hasPending(owner), false);
+});
+
+test("sessions are isolated", async () => {
+	const b = bridge();
+	const other = {};
 	schedule({ kind: "reload" });
-	assert.equal(hasPending(owner), true, "next action must be schedulable after a failure");
+	assert.deepEqual(b.settle(other), [], "another session has nothing to dispatch");
+	assert.equal(schedule({ kind: "reload" }, other).terminate, true);
+	clearPending(other);
+	assert.equal(hasPending(owner), true);
 	clearPending(owner);
 });
 
-test("nav delivers follow-up message through the runtime", async () => {
-	reset();
-	schedule({ kind: "nav", targetId: "t1", message: "continue here" });
-	await runPending(owner, notify, { sendFollowUp: async (msg) => calls.push(["followUp", msg]) });
-	assert.deepEqual(calls.at(-1), ["followUp", "continue here"]);
-});
-
-test("reload delivers message via the fresh runner runtime", async () => {
-	reset();
-	schedule({ kind: "reload", message: "verify things" });
-	await runPending(owner, notify);
-	assert.deepEqual(calls, [["reload"], ["sendUserMessage", "verify things", { deliverAs: "followUp" }]]);
-});
-
-test("rawOp: token lifecycle and execution", async () => {
-	reset();
-	const r = scheduleRawOp(owner, "test-op", async () => calls.push(["exec"]));
-	assert.equal(r.ok, true);
-	assert.equal(isPendingRawOp(owner, r.token), true);
-	assert.equal(scheduleRawOp(owner, "second", async () => {}).ok, false, "slot must be exclusive");
-	assert.equal(scheduleDeferred(owner, "switch", async () => {}).ok, false, "deferred must not replace a pending rawOp");
-
-	assert.equal(clearPendingRawOp(owner, r.token), true);
+test("deferred actions run inline on agent_settled, before external listeners", async () => {
+	// Core awaits extension agent_settled handlers before external SDK/RPC/UI
+	// listeners hear settled and may prompt, so the switch must be done by then.
+	let model = "old";
+	assert.equal(scheduleDeferred(owner, "model switch", async () => { await Promise.resolve(); model = "new"; }).ok, true);
+	assert.deepEqual(bridge().settle(), [], "deferred actions are not dispatched to the bridge");
+	assert.equal(await runPendingDeferredInline(owner), true);
+	assert.equal(model, "new");
 	assert.equal(hasPending(owner), false);
 
-	const r2 = scheduleRawOp(owner, "test-op-2", async () => calls.push(["exec2"]));
-	await runPending(owner, notify);
-	assert.deepEqual(calls, [["exec2"]]);
-	assert.equal(isPendingRawOp(owner, r2.token), false);
-});
+	const notes = [];
+	scheduleDeferred(owner, "model switch", async () => { throw new Error("boom"); });
+	assert.equal(await runPendingDeferredInline(owner, (msg, level) => notes.push([level, msg])), true);
+	assert.equal(notes[0][0], "error");
 
-test("waitForIdle gates transitions: a turn racing the settled window finishes first", async () => {
-	reset();
-	// Simulates an external prompt that raced the public settled event and
-	// started a turn in the settled→timer window: waitForIdle stays pending
-	// until that turn ends, and the transition must not start before it.
-	let releaseIdle;
-	behavior.idleGate = new Promise((r) => { releaseIdle = r; });
-	schedule({ kind: "resume", file: "/tmp/a.jsonl" });
-	const running = runPending(owner, notify);
-	await new Promise((r) => setTimeout(r, 0));
-	assert.deepEqual(calls, [], "transition must wait for the racing turn to finish");
-
-	// The racing turn must not be able to schedule a second transition that
-	// would resume concurrently on the same idle edge (the reviewer's repro:
-	// start:A start:B end:A end:B).
-	assert.throws(() => schedule({ kind: "resume", file: "/tmp/b.jsonl" }), /a session switch is in progress/);
-	const second = runPending(owner, notify);
-
-	releaseIdle();
-	await Promise.all([running, second]);
-	assert.deepEqual(calls.map((c) => c[0]), ["switchSession"], "exactly one transition must execute");
-	assert.deepEqual(calls[0].slice(0, 2), ["switchSession", "/tmp/a.jsonl"]);
-});
-
-test("rawOp: cancelled result surfaces as a warning, also headless", async () => {
-	reset();
-	scheduleRawOp(owner, "op-cancelled", async () => ({ cancelled: true }));
-	await runPending(owner, notify);
-	assert.equal(notes.length, 1);
-	assert.equal(notes[0][0], "warning");
-
-	notes.length = 0;
-	const warns = [];
-	const origWarn = console.warn;
-	console.warn = (...args) => warns.push(args.join(" "));
-	try {
-		scheduleRawOp(owner, "op-headless", async () => ({ cancelled: true }));
-		await runPending(owner, undefined);
-	} finally { console.warn = origWarn; }
-	assert.ok(warns.some((w) => w.includes("op-headless")), "headless cancellation must identify the operation");
-});
-
-test("headless cancelled transitions reach console.warn", async () => {
-	reset();
-	behavior.cancelled = true;
-	const warns = [];
-	const origWarn = console.warn;
-	console.warn = (...args) => warns.push(args.join(" "));
-	try {
-		schedule({ kind: "fork", id: "abc" });
-		await runPending(owner, undefined);
-	} finally { console.warn = origWarn; }
-	assert.ok(warns.some((w) => /fork/i.test(w)), "headless veto must identify the operation");
+	schedule({ kind: "reload" });
+	assert.equal(await runPendingDeferredInline(owner), false, "session actions are left for the bridge");
+	clearPending(owner);
 });
 
 test("reload-refreshed module instances share one patch and one state", async () => {
-	reset();
-	// Pi's /reload re-executes extension modules as fresh instances (module
-	// cache cleared). A second instance must not re-wrap the same prototype and
-	// must see the same ops/pending/runner state.
+	// Pi's /reload re-executes extension modules as fresh instances. A second
+	// instance must not re-wrap the prototype and must see the same state.
+	assert.equal(patchBindCommandContext(), true);
 	const before = ExtensionRunner.prototype.bindCommandContext;
 	const mod2 = await import(new URL("../extensions/command-actions.ts?reload=2", import.meta.url).href);
-	assert.equal(mod2.patchBindCommandContext(), true, "second instance must see the process-wide patch as installed");
+	assert.equal(mod2.patchBindCommandContext(), true);
 	assert.equal(ExtensionRunner.prototype.bindCommandContext, before, "second patch call must not re-wrap bindCommandContext");
 
 	schedule({ kind: "reload" });
 	assert.equal(mod2.hasPending(owner), true, "pending state must be shared across module instances");
 	mod2.clearPending(owner);
-	assert.equal(hasPending(owner), false, "clearing via the second instance must clear the shared slot");
+	assert.equal(hasPending(owner), false);
 
-	ExtensionRunner.prototype.bindCommandContext.call(fakeRunner, actions);
-	assert.equal(mod2.isArmed(owner), true, "re-binding must arm every instance");
-	assert.equal(mod2.getRunner(owner), fakeRunner, "runner capture must be shared");
+	const runner = { sessionManager: owner };
+	ExtensionRunner.prototype.bindCommandContext.call(runner, {});
+	assert.equal(mod2.getRunner(owner), runner, "runner capture must be shared");
+	assert.equal(getRunner(owner), runner);
 });

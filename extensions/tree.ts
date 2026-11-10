@@ -374,7 +374,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Ask the user to run `/tree`.",
 						action: {
 							kind: "nav",
 							targetId: navEntry.id,
@@ -403,7 +402,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						throw new Error(`Fork requires a user-message entry. Entry ${params.entryId} is ${actualKind}.`);
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Ask the user to run `/fork`.",
 						action: { kind: "fork", id: target.id, message: params.message },
 						successText: `Scheduled fork from entry: ${target.id}${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "fork", entryId: target.id, messageScheduled: params.message !== undefined },
