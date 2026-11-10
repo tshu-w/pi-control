@@ -87,9 +87,10 @@ test("tree rejects invalid parameters, targets and label collisions without muta
 		[{ action: "set_label" }, /entryId.*required/],
 		[{ action: "set_label", entryId: "missing" }, /Entry not found/],
 		[{ action: "set_label", entryId: "entry-1", label: "bookmark" }, /already used by \[entry-2\]/],
-		[{ action: "navigate" }, /target.*required/],
-		[{ action: "navigate", target: "missing" }, /Target not found/],
-		[{ action: "navigate", target: "entry-" }, /Ambiguous.*entry-1.*entry-2/],
+		[{ action: "navigate" }, /entryId.*required for navigate/],
+		[{ action: "navigate", entryId: "missing" }, /Entry not found: missing/],
+		[{ action: "navigate", entryId: "entry-" }, /Entry not found: entry-$/],
+		[{ action: "navigate", entryId: "bookmark" }, /Entry not found: bookmark/],
 		[{ action: "fork" }, /entryId.*required/],
 		[{ action: "fork", entryId: "missing" }, /Entry not found/],
 		[{ action: "fork", entryId: "entry-2" }, /Fork requires a user-message entry/],
@@ -98,7 +99,7 @@ test("tree rejects invalid parameters, targets and label collisions without muta
 	}
 	assert.deepEqual(mutations, []);
 	assert.equal(hasPending(ctx), false);
-	const noOp = await execute({ action: "navigate", target: "entry-1" }, ctx);
+	const noOp = await execute({ action: "navigate", entryId: "entry-1" }, ctx);
 	assert.match(noOp.content[0].text, /Already at entry/);
 	assert.equal(hasPending(ctx), false);
 	const empty = await execute({ action: "search", keyword: "missing" }, ctx);
@@ -112,7 +113,7 @@ test("transition rejection preserves the previously scheduled operation", async 
 	const ctx = treeContext();
 	await assert.rejects(sessions({ action: "new" }, ctx), /Session control is unavailable.*\/new/);
 	await assert.rejects(sessions({ action: "reload" }, ctx), /Session control is unavailable.*\/reload/);
-	await assert.rejects(tree({ action: "navigate", target: "bookmark" }, ctx), /Session control is unavailable.*\/tree/);
+	await assert.rejects(tree({ action: "navigate", entryId: "entry-2" }, ctx), /Session control is unavailable.*\/tree/);
 	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Session control is unavailable.*\/fork/);
 	assert.equal(hasPending(ctx), false);
 	const calls = [];

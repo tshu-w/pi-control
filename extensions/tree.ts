@@ -12,25 +12,6 @@ import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./to
 
 const SETTINGS_TYPES = new Set(["label", "custom", "custom_message", "model_change", "thinking_level_change", "session_info"]);
 
-function resolveNavigateTarget(sm: any, target: string): any | null {
-	const direct = sm.getEntry(target);
-	if (direct) return direct;
-
-	const lower = target.toLowerCase();
-	const idMatches = sm.getEntries().filter((e: any) =>
-		typeof e.id === "string" && e.id.toLowerCase().startsWith(lower)
-	);
-	if (idMatches.length === 1) return idMatches[0];
-
-	for (const e of sm.getEntries()) {
-		if (sm.getLabel((e as any).id) === target) return e;
-	}
-	if (idMatches.length > 1) {
-		throw new Error(`Ambiguous target "${target}". Candidates: ${idMatches.map((e: any) => e.id).join(", ")}. Use a full entry ID.`);
-	}
-	return null;
-}
-
 export function registerTreeRouter(pi: ExtensionAPI) {
 	registerCompaction(pi);
 	pi.registerTool(withToolOutputContract({
@@ -53,8 +34,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 				description: "Action to perform",
 			}),
 			// navigate / fork / set_label params
-			target: Type.Optional(Type.String({ description: "Entry ID, ID prefix, or label for navigate." })),
-			entryId: Type.Optional(Type.String({ description: "Entry ID for fork or set_label. Required for both; fork requires a user-message entry. Also accepted as the target for navigate." })),
+			entryId: Type.Optional(Type.String({ description: "Entry ID for navigate, fork, or set_label. Required for these actions; fork requires a user-message entry." })),
 			label: Type.Optional(Type.String({ description: "Label for set_label. Omit to clear the entry's label." })),
 			message: Type.Optional(Type.String({ description: "User message after navigate or fork (omit to leave idle)." })),
 			summarize: Type.Optional(Type.Boolean({ description: "Summarize the abandoned branch for navigate (default: false)." })),
@@ -383,13 +363,12 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 				// ── navigate ────────────────────────────────────────
 				case "navigate": {
-					const rawTarget = params.target ?? params.entryId;
-					if (!rawTarget) {
-						throw new Error("`target` is required for navigate.");
+					if (!params.entryId) {
+						throw new Error("`entryId` is required for navigate.");
 					}
-					const navEntry = resolveNavigateTarget(ctx.sessionManager, rawTarget);
+					const navEntry = ctx.sessionManager.getEntry(params.entryId);
 					if (!navEntry) {
-						throw new Error(`Target not found: ${rawTarget}`);
+						throw new Error(`Entry not found: ${params.entryId}`);
 					}
 					if (navEntry.id === ctx.sessionManager.getLeafId()) {
 						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
