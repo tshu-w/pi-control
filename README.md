@@ -1,8 +1,8 @@
 # pi-control
 
-A [pi](https://pi.dev) package that lets the agent drive pi's runtime itself — resume sessions, switch models, navigate history — through tool calls.
+A [Pi](https://pi.dev) package that lets the agent drive Pi's runtime itself — resume sessions, switch models, navigate history — through tool calls.
 
-Most agent harnesses keep these controls user-only. Ask for "my previous dev session" or "try another model from here", and the user still has to type the slash command. pi-control changes that: it exposes runtime control to the agent. **If the user can do it, the agent should too.**
+Ask for "my previous dev session" or "try another model from here", and the agent does it instead of asking you to type the slash command.
 
 ## What's in the box
 
@@ -15,7 +15,7 @@ Most agent harnesses keep these controls user-only. Ask for "my previous dev ses
 | `models` | `list`, `switch`, `consult` |
 | `commands` | `list`, `run` |
 
-**Runtime status** (event-driven)
+**Runtime status**
 
 Notifies the model on state changes:
 
@@ -32,18 +32,15 @@ pi install git:github.com/tshu-w/pi-control
 
 ## Heads-up
 
-Session changes run through `/pi-control-internal`, a command pi-control registers for its tools. It shows up in the command list and does nothing when typed.
+`/pi-control-internal` appears in the command list; it is used by pi-control's tools and does nothing when typed.
 
-`commands(action='run')` calls other extensions' command handlers through Pi's private extension runner. If Pi changes it, that action fails with an error asking the user to run the command.
-
-Tested with `@earendil-works/pi-coding-agent` 1.5. Public API tracking: [earendil-works/pi#2023](https://github.com/earendil-works/pi/issues/2023).
+`commands(action='run')` relies on a private Pi API; if Pi changes it, run the slash command yourself.
 
 ## Testing
 
 ```bash
 npm install && npm test
 ```
-
 
 ## License
 
