@@ -24,7 +24,7 @@ test("ExtensionRunner still exposes the patched/used private methods", () => {
 	}
 });
 
-test("pi still exposes the agent_settled extension event (pi >= 0.80.4)", () => {
+test("pi still exposes the agent_settled extension event", () => {
 	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 	const types = readFileSync(path.join(path.dirname(entry), "core", "extensions", "types.d.ts"), "utf8");
 	// Deferred transitions run on agent_settled; if pi renames or drops the

@@ -80,8 +80,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// ── Execute pending actions after agent fully settles ──
-	// agent_settled (pi >= 0.80.4) fires only when no auto-retry, compaction
-	// retry, or queued follow-up remains.
+	// agent_settled fires only when no auto-retry, compaction retry, or queued
+	// follow-up remains.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!hasPending(ctx)) return;
 		const notify = ctx.hasUI
