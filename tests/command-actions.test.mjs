@@ -31,11 +31,11 @@ const actions = {
 };
 
 const reset = () => { calls.length = 0; notes.length = 0; behavior = { cancelled: false, throwError: null, gate: null, idleGate: null }; clearPending(owner); };
-const schedule = (action) => scheduleAction(owner, { fallbackHint: "Use built-in `/x` instead.", action, successText: "scheduled", details: {} });
+const schedule = (action) => scheduleAction(owner, { fallbackHint: "Ask the user to run `/x`.", action, successText: "scheduled", details: {} });
 
 test("unarmed scheduling throws with the built-in hint", () => {
 	assert.equal(isArmed(owner), false);
-	assert.throws(() => schedule({ kind: "resume", file: "/tmp/a.jsonl" }), /Command context not captured.*Use built-in/);
+	assert.throws(() => schedule({ kind: "resume", file: "/tmp/a.jsonl" }), /Session control is unavailable.*Ask the user to run `\/x`/);
 	assert.equal(hasPending(owner), false);
 });
 
@@ -44,7 +44,7 @@ test("deferred: runs unarmed, rejects a second deferred, blocked by other kinds"
 	assert.equal(scheduleDeferred(owner, "switch-a", async () => calls.push(["deferred-a"])).ok, true, "deferred needs no command context");
 	assert.deepEqual(scheduleDeferred(owner, "switch-b", async () => calls.push(["deferred-b"])), {
 		ok: false,
-		reason: "another pending action (switch-a) is already queued",
+		reason: "a switch-a is already scheduled",
 	}, "a later deferred must not drop the pending one");
 	await runPending(owner, notify);
 	assert.deepEqual(calls, [], "runPending leaves deferred actions to the settled handler");
@@ -140,7 +140,7 @@ test("single slot covers in-flight execution: no scheduling while a transition r
 
 	// The in-flight action must keep the slot occupied.
 	assert.equal(hasPending(owner), true, "in-flight transition must occupy the slot");
-	assert.throws(() => schedule({ kind: "reload" }), /in-flight resume/);
+	assert.throws(() => schedule({ kind: "reload" }), /a session switch is in progress/);
 	assert.equal(scheduleRawOp(owner, "op", async () => {}).ok, false, "rawOp must be rejected while in flight");
 	assert.equal(scheduleDeferred(owner, "switch", async () => {}).ok, false, "deferred must be rejected while in flight");
 
@@ -248,7 +248,7 @@ test("waitForIdle gates transitions: a turn racing the settled window finishes f
 	// The racing turn must not be able to schedule a second transition that
 	// would resume concurrently on the same idle edge (the reviewer's repro:
 	// start:A start:B end:A end:B).
-	assert.throws(() => schedule({ kind: "resume", file: "/tmp/b.jsonl" }), /in-flight resume/);
+	assert.throws(() => schedule({ kind: "resume", file: "/tmp/b.jsonl" }), /a session switch is in progress/);
 	const second = runPending(owner, notify);
 
 	releaseIdle();

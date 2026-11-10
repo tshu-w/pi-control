@@ -115,9 +115,23 @@ export function hasPending(owner: CommandOwner): boolean {
 }
 /** True only when an action is scheduled but not yet claimed by runPending. */
 export function hasQueuedAction(owner: CommandOwner): boolean { return stateFor(owner)?.pending != null; }
-function busyKind(state: CommandState): string | undefined {
-	return state.pending?.kind ?? (state.inFlight ? `in-flight ${state.inFlight.kind}` : undefined);
+const KIND_LABELS: Record<string, string> = {
+	resume: "session switch",
+	new: "new session",
+	nav: "tree navigation",
+	fork: "fork",
+	reload: "reload",
+};
+function actionLabel(action: PendingAction): string {
+	return "label" in action ? action.label : KIND_LABELS[action.kind]!;
 }
+/** Why the session's single slot is taken, e.g. "a fork is already scheduled". */
+function busyReason(state: CommandState): string | undefined {
+	if (state.inFlight) return `a ${state.inFlight.label} is in progress`;
+	if (state.pending) return `a ${actionLabel(state.pending)} is already scheduled`;
+	return undefined;
+}
+const UNAVAILABLE = "Session control is unavailable in this Pi runtime.";
 /** The ExtensionRunner instance captured for this session. */
 export function getRunner(owner: CommandOwner): any { return stateFor(owner)?.runner ?? null; }
 
@@ -133,7 +147,7 @@ export function clearPending(owner: CommandOwner): void {
  * which handles the isArmed / hasPending / set / response boilerplate.
  */
 export interface ScheduleParams {
-	/** Short hint pointing at the built-in fallback command, e.g. "Use built-in `/resume` instead." */
+	/** Next step when session control is unavailable, e.g. "Ask the user to run `/resume`." */
 	fallbackHint: string;
 	/** The action to schedule. */
 	action: PendingAction;
@@ -143,18 +157,20 @@ export interface ScheduleParams {
 	details?: Record<string, any>;
 }
 
-export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
+export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { content: Array<{ type: "text"; text: string }>; details: Record<string, any>; terminate: true } {
 	const state = stateFor(owner);
 	if (!state?.ops) {
-		throw new Error(`Command context not captured. ${params.fallbackHint}`);
+		throw new Error(`${UNAVAILABLE} ${params.fallbackHint}`);
 	}
-	if (state.pending || state.inFlight) {
-		throw new Error(`Another pending action (${busyKind(state)}) is already scheduled. Wait for the current turn to finish.`);
+	const busy = busyReason(state);
+	if (busy) {
+		throw new Error(`Cannot schedule this change: ${busy}. Try again after it takes effect.`);
 	}
 	state.pending = params.action;
 	return {
 		content: [{ type: "text", text: params.successText }],
 		details: params.details ?? {},
+		terminate: true,
 	};
 }
 
@@ -162,13 +178,8 @@ export function scheduleAction(owner: CommandOwner, params: ScheduleParams): { c
  *  needs no captured command context. Any pending action rejects the request. */
 export function scheduleDeferred(owner: CommandOwner, label: string, exec: () => Promise<void>): { ok: true } | { ok: false; reason: string } {
 	const state = stateFor(owner, true)!;
-	if (state.inFlight) {
-		return { ok: false, reason: `another action (in-flight ${state.inFlight.kind}) is already executing` };
-	}
-	if (state.pending) {
-		const pending = state.pending.kind === "deferred" ? state.pending.label : state.pending.kind;
-		return { ok: false, reason: `another pending action (${pending}) is already queued` };
-	}
+	const busy = busyReason(state);
+	if (busy) return { ok: false, reason: busy };
 	state.pending = { kind: "deferred", label, exec };
 	return { ok: true };
 }
@@ -177,8 +188,9 @@ export function scheduleDeferred(owner: CommandOwner, label: string, exec: () =>
  *  scheduleAction success-text plumbing. Returns the reason if not armed or busy. */
 export function scheduleRawOp(owner: CommandOwner, label: string, exec: () => Promise<{ cancelled?: boolean } | void>): { ok: true; token: symbol } | { ok: false; reason: string } {
 	const state = stateFor(owner);
-	if (!state?.ops) return { ok: false, reason: "command context not captured (pi-control patch inactive)" };
-	if (state.pending || state.inFlight) return { ok: false, reason: `another pending action (${busyKind(state)}) is already queued` };
+	if (!state?.ops) return { ok: false, reason: "session control is unavailable in this Pi runtime" };
+	const busy = busyReason(state);
+	if (busy) return { ok: false, reason: busy };
 	const token = Symbol(label);
 	state.pending = { kind: "rawOp", token, label, exec };
 	return { ok: true, token };
@@ -270,7 +282,7 @@ export async function runPending(
 	const action = state?.pending;
 	if (!state || !action || action.kind === "deferred") return;
 	state.pending = null;
-	state.inFlight = { kind: action.kind, label: "label" in action && action.label ? action.label : action.kind };
+	state.inFlight = { kind: action.kind, label: actionLabel(action) };
 	try {
 		await dispatchPending(state, action, notify, runtime);
 	} finally {

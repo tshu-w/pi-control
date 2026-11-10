@@ -110,24 +110,24 @@ test("transition rejection preserves the previously scheduled operation", async 
 	const tree = register(registerTreeRouter);
 	const models = register(registerModelsRouter);
 	const ctx = treeContext();
-	await assert.rejects(sessions({ action: "new" }, ctx), /Command context not captured.*\/new/);
-	await assert.rejects(sessions({ action: "reload" }, ctx), /Command context not captured.*\/reload/);
-	await assert.rejects(tree({ action: "navigate", target: "bookmark" }, ctx), /Command context not captured.*\/tree/);
-	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Command context not captured.*\/fork/);
+	await assert.rejects(sessions({ action: "new" }, ctx), /Session control is unavailable.*\/new/);
+	await assert.rejects(sessions({ action: "reload" }, ctx), /Session control is unavailable.*\/reload/);
+	await assert.rejects(tree({ action: "navigate", target: "bookmark" }, ctx), /Session control is unavailable.*\/tree/);
+	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Session control is unavailable.*\/fork/);
 	assert.equal(hasPending(ctx), false);
 	const calls = [];
 	arm(ctx, calls);
 	const scheduled = await sessions({ action: "reload" }, ctx);
 	assert.equal(scheduled.details.scheduled, "reload");
-	await assert.rejects(sessions({ action: "new" }, ctx), /Another pending action/);
-	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Another pending action/);
+	await assert.rejects(sessions({ action: "new" }, ctx), /Cannot schedule this change: a reload is already scheduled/);
+	await assert.rejects(tree({ action: "fork", entryId: "entry-1" }, ctx), /Cannot schedule this change: a reload is already scheduled/);
 	ctx.scopedModels = [];
 	ctx.modelRegistry = {
 		getAvailable: async () => [{ provider: "one", id: "model" }],
 		find: () => ({ provider: "one", id: "model" }),
 		getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test" }),
 	};
-	await assert.rejects(models({ action: "switch", modelId: "one/model" }, ctx), /Cannot schedule switch/);
+	await assert.rejects(models({ action: "switch", modelId: "one/model" }, ctx), /Cannot schedule the model switch: a reload is already scheduled/);
 	assert.equal(hasPending(ctx), true);
 	await runPending(ctx);
 	assert.deepEqual(calls, [["reload"]]);

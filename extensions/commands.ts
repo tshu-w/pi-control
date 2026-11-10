@@ -13,9 +13,19 @@ import { renderCollapsed, renderToolCall } from "./render-call.js";
 import { clampLimit } from "./utils.js";
 import { isOutputTruncated, styleToolOutput, withToolOutputContract } from "./tool-output.js";
 
+const OP_LABELS: Record<string, string> = {
+	newSession: "new session",
+	fork: "fork",
+	switchSession: "session switch",
+	navigateTree: "tree navigation",
+	reload: "reload",
+};
+
 class DeferredTransitionRequested extends Error {
+	readonly label: string;
 	constructor(public op: string, public schedulingError?: string) {
 		super(`deferred:${op}`);
+		this.label = OP_LABELS[op]!;
 	}
 }
 
@@ -53,7 +63,7 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	let transitionRequest: DeferredTransitionRequested | null = null;
 
 	const scheduleTransition = (op: string, runner: () => Promise<{ cancelled?: boolean } | void>): never => {
-		const result = scheduleRawOp(ctx, op, runner);
+		const result = scheduleRawOp(ctx, OP_LABELS[op]!, runner);
 		if (!result.ok) {
 			transitionRequest = new DeferredTransitionRequested(op, result.reason);
 			throw transitionRequest;
@@ -114,47 +124,14 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	};
 }
 
-function renderResult(
-	status: string,
-	command: string,
-	args: string,
-	capture: Capture,
-	extra: { scheduled?: { op: string; reason?: string }; error?: string } = {},
-): { content: Array<{ type: "text"; text: string }>; details: Record<string, any> } {
-	if (status === "completed") {
-		const messages = capture.notifications.map((notification) =>
-			notification.level === "info" ? notification.message : `[${notification.level}] ${notification.message}`,
-		);
-		return {
-			content: [{ type: "text", text: messages.join("\n") || `/${command}${args ? " " + args : ""} completed.` }],
-			details: { status },
-		};
-	}
-
-	const lines = [`/${command}${args ? " " + args : ""}: ${status}`];
-	if (extra.scheduled) {
-		if (status === "scheduled_transition") {
-			lines[0] = `/${command}${args ? " " + args : ""}: ${extra.scheduled.op} scheduled after the current turn.`;
-		} else {
-			lines.push(`Scheduled transition: ${extra.scheduled.op}`);
-		}
-		if (extra.scheduled.reason) lines.push(`  (note: ${extra.scheduled.reason})`);
-	}
-	if (extra.error) lines.push(`Error: ${extra.error}`);
-	for (const notification of capture.notifications) {
-		lines.push(notification.level === "info" ? notification.message : `[${notification.level}] ${notification.message}`);
-	}
-	return {
-		content: [{ type: "text", text: lines.join("\n") }],
-		details: {
-			status,
-			...(extra.scheduled ? { scheduledTransition: { op: extra.scheduled.op } } : {}),
-		},
-	};
+function formatNotifications(capture: Capture): string[] {
+	return capture.notifications.map((notification) =>
+		notification.level === "info" ? notification.message : `[${notification.level}] ${notification.message}`,
+	);
 }
 
-function throwCommandResult(result: ReturnType<typeof renderResult>, cause: unknown): never {
-	throw new Error(result.content[0]?.text ?? "Command failed.", { cause });
+function throwCommandError(text: string, capture: Capture, cause: unknown): never {
+	throw new Error([text, ...formatNotifications(capture)].join("\n"), { cause });
 }
 
 export function registerCommandsRouter(pi: ExtensionAPI) {
@@ -225,7 +202,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const runner = getRunner(ctx);
 			if (!runner) {
-				throw new Error("Commands router unavailable: ExtensionRunner not captured (pi-control patch inactive).");
+				throw new Error("Commands are unavailable in this Pi runtime. Ask the user to run the slash command.");
 			}
 
 			switch (params.action) {
@@ -252,7 +229,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						return {
 							content: [{ type: "text", text: total > 0
 								? `No commands at offset ${offset} (total: ${total}).`
-								: filter ? `No commands match "${filter}".` : "No third-party slash commands registered." }],
+								: filter ? `No commands match "${filter}".` : "No extension commands registered." }],
 							details: { total, offset, limit, commands: [] },
 						};
 					}
@@ -292,6 +269,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						throw new Error(`No command named "${name}". Use commands(action="list") to see available commands.`);
 					}
 
+					const invocation = `/${name}${args ? " " + args : ""}`;
 					const realCtx = runner.createCommandContext();
 					const capture: Capture = { notifications: [] };
 
@@ -306,38 +284,39 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						const swallowedTransition = mediated.getTransitionRequest();
 						if (swallowedTransition) {
 							if (mediated.clearOwnPendingRawOp()) {
-								throw new Error("Handler swallowed a scheduled session transition; transition cancelled.");
+								const label = swallowedTransition.label;
+								throw new Error(`it continued after requesting a ${label}, so the ${label} was cancelled`);
 							}
 							throw swallowedTransition;
 						}
-						return renderResult("completed", name, args, capture);
+						return {
+							content: [{ type: "text", text: formatNotifications(capture).join("\n") || `${invocation} completed.` }],
+							details: { status: "completed" },
+						};
 					} catch (e) {
 						if (e instanceof DeferredTransitionRequested) {
 							if (e.schedulingError) {
-								throwCommandResult(renderResult("busy", name, args, capture, {
-									scheduled: { op: e.op, reason: e.schedulingError },
-								}), e);
+								throwCommandError(`${invocation} requested a ${e.label}, but ${e.schedulingError}. Try again after it takes effect.`, capture, e);
 							}
-							return renderResult("scheduled_transition", name, args, capture, {
-								scheduled: { op: e.op },
-							});
+							return {
+								content: [{ type: "text", text: [`Scheduled ${e.label} requested by ${invocation}.`, ...formatNotifications(capture)].join("\n") }],
+								details: { status: "scheduled_transition", scheduledTransition: { op: e.op } },
+								terminate: true,
+							};
 						}
 						// Non-sentinel throw: if this command queued a transition before
 						// throwing, drop it. Partial mid-flight state is not safe to apply.
-						if (mediated?.clearOwnPendingRawOp()) {
+						const request = mediated?.getTransitionRequest();
+						if (request && mediated?.clearOwnPendingRawOp()) {
 							capture.notifications.push({
 								level: "warning",
-								message: "Handler threw after scheduling a transition; pending transition cancelled.",
+								message: `The ${request.label} requested before the failure was cancelled.`,
 							});
 						}
 						if (e instanceof InteractiveUIUnavailable) {
-							throwCommandResult(renderResult("interactive_unavailable", name, args, capture, {
-								error: e.message,
-							}), e);
+							throwCommandError(`${invocation} needs interactive input, which is unavailable in this mode. Ask the user to run it.`, capture, e);
 						}
-						throwCommandResult(renderResult("failed", name, args, capture, {
-							error: e instanceof Error ? `${e.message}` : String(e),
-						}), e);
+						throwCommandError(`${invocation} failed: ${e instanceof Error ? e.message : String(e)}`, capture, e);
 					}
 				}
 			}

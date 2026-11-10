@@ -39,14 +39,14 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		label: "Tree",
 		description: [
 			"Browse and navigate the current Session tree, search entries, manage labels, fork a new Session before a user message, or compact model context.",
-			"navigate and fork take effect after the current turn. compact takes effect after the current tool batch, before the next model request.",
+			"compact takes effect after the current tool batch, before the next model request.",
 		].join(" "),
 		promptSnippet: "Browse and navigate the current Session tree",
 		promptGuidelines: [
 			"Use tree(action='list') or tree(action='search') when the target entry is unknown.",
 			"Use tree(action='navigate') for user-approved changes to the active branch.",
 			"Use tree(action='compact') when context usage is high.",
-			"Finish your turn after calling tree with action='navigate' or 'fork'.",
+			"tree with action='navigate' or 'fork' takes effect after the current turn; finish your turn after calling it.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "search", "labels", "set_label", "navigate", "fork", "compact"] as const, {
@@ -395,7 +395,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						return { content: [{ type: "text", text: `Already at entry: ${navEntry.id}` }], details: { entryId: navEntry.id } };
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Use built-in `/tree` instead.",
+						fallbackHint: "Ask the user to run `/tree`.",
 						action: {
 							kind: "nav",
 							targetId: navEntry.id,
@@ -403,7 +403,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 							customInstructions: params.customInstructions,
 							message: params.message,
 						},
-						successText: `Scheduled tree navigation to entry: ${navEntry.id}${params.message ? " (with followUp message)" : ""}`,
+						successText: `Scheduled tree navigation to entry: ${navEntry.id}${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "navigate", entryId: navEntry.id, messageScheduled: params.message !== undefined },
 					});
 				}
@@ -424,9 +424,9 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						throw new Error(`Fork requires a user-message entry. Entry ${params.entryId} is ${actualKind}.`);
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Use built-in `/fork` instead.",
+						fallbackHint: "Ask the user to run `/fork`.",
 						action: { kind: "fork", id: target.id, message: params.message },
-						successText: `Scheduled fork from entry: ${target.id}${params.message ? " (with followUp message)" : ""}`,
+						successText: `Scheduled fork from entry: ${target.id}${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "fork", entryId: target.id, messageScheduled: params.message !== undefined },
 					});
 				}

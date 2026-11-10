@@ -15,14 +15,13 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 		label: "Sessions",
 		description: [
 			"Manage Sessions: inspect state, search, resume, create, rename, queue user messages, or reload extensions and runtime.",
-			"resume, new, and reload take effect after the current turn.",
 			"resume and new replace the active Session and its context.",
 		].join(" "),
 		promptSnippet: "Manage Sessions",
 		promptGuidelines: [
 			"Use sessions(action='search') when the Session file to resume is unknown.",
 			"Use sessions(action='resume') or sessions(action='new') for user-approved Session changes.",
-			"Finish your turn after calling sessions with action='resume', 'new', or 'reload'.",
+			"sessions with action='resume', 'new', or 'reload' takes effect after the current turn; finish your turn after calling it.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["info", "search", "resume", "new", "name", "queue_message", "reload"] as const, {
@@ -168,7 +167,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						throw new Error(`Session path is not a .jsonl file: ${params.sessionFile}`);
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Use built-in `/resume` instead.",
+						fallbackHint: "Ask the user to run `/resume`.",
 						action: { kind: "resume", file: params.sessionFile, message: params.message },
 						successText: `Scheduled session switch to: ${params.sessionFile}${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "resume", sessionFile: params.sessionFile, messageScheduled: params.message !== undefined },
@@ -184,7 +183,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					const linkParent = params.linkParent ?? true;
 					const parentSession = linkParent ? currentFile ?? undefined : undefined;
 					return scheduleAction(ctx, {
-						fallbackHint: "Use built-in `/new` instead.",
+						fallbackHint: "Ask the user to run `/new`.",
 						action: { kind: "new", parentSession, message: params.message },
 						successText: `Scheduled new session creation${params.message ? " (with follow-up message)" : ""}.`,
 						details: {
@@ -233,7 +232,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						throw new Error("`message` must contain at least one non-whitespace character when provided.");
 					}
 					return scheduleAction(ctx, {
-						fallbackHint: "Use built-in `/reload` instead.",
+						fallbackHint: "Ask the user to run `/reload`.",
 						action: { kind: "reload", message: params.message },
 						successText: `Scheduled runtime reload${params.message ? " (with follow-up message)" : ""}.`,
 						details: { scheduled: "reload", messageScheduled: params.message !== undefined },

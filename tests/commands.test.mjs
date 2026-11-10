@@ -75,7 +75,7 @@ test("command failures reject while scheduled transitions remain successful", as
 					throw originalError;
 				},
 			},
-			pattern: /\/broken: failed[\s\S]*Error: boom[\s\S]*\[warning\] before failure/,
+			pattern: /\/broken failed: boom\n\[warning\] before failure$/,
 		},
 		{
 			name: "interactive UI",
@@ -86,7 +86,7 @@ test("command failures reject while scheduled transitions remain successful", as
 				handler: async (_args, ctx) => ctx.ui.input("Value"),
 			},
 			options: { hasUI: false },
-			pattern: /\/prompt: interactive_unavailable[\s\S]*ui\.input requires a real TTY/,
+			pattern: /\/prompt needs interactive input, which is unavailable in this mode\. Ask the user to run it\.$/,
 		},
 		{
 			name: "swallowed transition",
@@ -98,7 +98,7 @@ test("command failures reject while scheduled transitions remain successful", as
 					try { await ctx.reload(); } catch {}
 				},
 			},
-			pattern: /transition cancelled/,
+			pattern: /\/swallow failed: it continued after requesting a reload, so the reload was cancelled$/,
 		},
 	];
 
@@ -118,7 +118,8 @@ test("command failures reject while scheduled transitions remain successful", as
 	};
 	const { tool, ctx } = setup(transition);
 	const scheduled = await tool.execute("scheduled", { action: "run", name: "reload-now" }, undefined, undefined, ctx);
-	assert.equal(scheduled.content[0].text, "/reload-now: reload scheduled after the current turn.");
+	assert.equal(scheduled.content[0].text, "Scheduled reload requested by /reload-now.");
+	assert.equal(scheduled.terminate, true);
 	assert.deepEqual(scheduled.details, {
 		status: "scheduled_transition",
 		scheduledTransition: { op: "reload" },
@@ -129,7 +130,7 @@ test("command failures reject while scheduled transitions remain successful", as
 	try {
 		await assert.rejects(
 			busyTool.execute("busy", { action: "run", name: "reload-now" }, undefined, undefined, busyCtx),
-			/\/reload-now: busy[\s\S]*another pending action/,
+			/\/reload-now requested a reload, but a occupied is already scheduled\. Try again after it takes effect\.$/,
 		);
 	} finally {
 		clearPending(busyCtx);
@@ -147,7 +148,7 @@ test("command failures reject while scheduled transitions remain successful", as
 	try {
 		await assert.rejects(
 			swallowedBusyTool.execute("swallow-busy", { action: "run", name: "swallow-busy" }, undefined, undefined, swallowedBusyCtx),
-			/\/swallow-busy: busy[\s\S]*another pending action/,
+			/\/swallow-busy requested a reload, but a occupied is already scheduled\./,
 		);
 	} finally {
 		clearPending(swallowedBusyCtx);
@@ -169,7 +170,7 @@ test("commands reject unavailable, missing, and unknown command requests", async
 	registerCommandsRouter({ registerTool(value) { unboundTool = value; } });
 	await assert.rejects(
 		unboundTool.execute("unavailable", { action: "list" }, undefined, undefined, { sessionManager: {} }),
-		/Commands router unavailable/,
+		/Commands are unavailable in this Pi runtime/,
 	);
 });
 

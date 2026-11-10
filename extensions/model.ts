@@ -91,14 +91,13 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 		label: "Models",
 		description: [
 			"List available models, switch the active model, or consult another model.",
-			"switch takes effect after the current turn.",
 			"consult returns a one-shot response without tools or a change to the active model.",
 		].join(" "),
 		promptSnippet: "List, switch, or consult models",
 		promptGuidelines: [
 			"Use models(action='list') to discover available scoped models when the target is uncertain.",
 			"Prefer scoped models; use scope='all' only when the user asks or scoped results are insufficient.",
-			"Finish your turn after calling models(action='switch').",
+			"models(action='switch') takes effect after the current turn; finish your turn after calling it.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list", "switch", "consult"] as const, {
@@ -250,12 +249,13 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						if (params.message) pi.sendUserMessage(params.message, { deliverAs: "followUp" });
 					});
 					if (!scheduled.ok) {
-						throw new Error(`Cannot schedule switch: ${scheduled.reason}.`);
+						throw new Error(`Cannot schedule the model switch: ${scheduled.reason}. Try again after it takes effect.`);
 					}
 
 					return {
-						content: [{ type: "text", text: `switch to ${model.provider}/${model.id} scheduled at end of this turn${params.message ? "; your message will start the next turn as a user message" : ""}. Finish your turn now.` }],
+						content: [{ type: "text", text: `Scheduled model switch to ${model.provider}/${model.id}${params.message ? " (with follow-up message)" : ""}.` }],
 						details: { provider: model.provider, modelId: model.id, thinkingLevel: params.thinkingLevel, scheduled: true, messageScheduled: params.message !== undefined },
+						terminate: true,
 					};
 				}
 
