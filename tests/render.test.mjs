@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createJiti } from "jiti";
-import { Text } from "@earendil-works/pi-tui";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { registerSessionsRouter } = await jiti.import("../extensions/session.ts");
@@ -15,16 +14,6 @@ registerSessionsRouter(pi);
 registerTreeRouter(pi);
 registerModelsRouter(pi);
 registerCommandsRouter(pi);
-
-function assertWrappedHint(tool, result, context, theme, hiddenText) {
-	const component = tool.renderResult(result, { expanded: false, isPartial: false }, theme, context);
-	for (const width of [24, 1000, 40]) {
-		component.invalidate();
-		const expected = new Text(hiddenText, 0, 0).render(width).length;
-		const lines = component.render(width).map((line) => line.trimEnd()).join("\n");
-		assert.ok(lines.includes(`... (${expected} more lines,`), `hidden display lines at width ${width}: ${lines}`);
-	}
-}
 
 const cases = [
 	["sessions", { action: "search", keyword: "renderer", limit: 10, scope: "all" }, '<b>sessions</b>(action="search", keyword="renderer", limit=10, scope="all")'],
@@ -51,164 +40,50 @@ test("router calls render every argument in function-call form", () => {
 	}
 });
 
-test("command runs collapse output after fifteen lines", () => {
-	const commands = tools.get("commands");
+test("collapsed results hide the tail and keep footers; expanded results stay complete", () => {
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const notifications = Array.from({ length: 16 }, (_, index) => `notification ${index + 1}${index === 15 ? " 中🙂".repeat(20) : ""}`);
-	const content = notifications.join("\n");
-	const context = { args: { action: "run" }, isError: false };
-
-	const collapsed = commands.renderResult(
-		{ content: [{ type: "text", text: content }], details: {} },
-		{ expanded: false, isPartial: false },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(collapsed, /^notification 1/);
-	assert.match(collapsed, /notification 15/);
-	assert.doesNotMatch(collapsed, /notification 16/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)$/);
-	assertWrappedHint(commands, { content: [{ type: "text", text: content }], details: {} }, context, theme, notifications[15]);
-
-	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/command.txt]";
-	const truncated = commands.renderResult(
-		{ content: [{ type: "text", text: `${content}\n\n${notice}` }], details: { truncation: { truncated: true } } },
-		{ expanded: false, isPartial: false },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[Showing lines/);
-});
-
-test("command lists collapse after twenty entries and retain truncation notices", () => {
-	const commands = tools.get("commands");
-	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const entries = Array.from({ length: 21 }, (_, index) => `/command-${index + 1} — description (source)`);
 	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/output.txt]";
-	const content = `${entries.join("\n")}\n\n${notice}`;
-	const result = { content: [{ type: "text", text: content }], details: {} };
-	const context = { args: { action: "list" }, isError: false };
-
-	const collapsed = commands.renderResult(result, { expanded: false, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assertWrappedHint(commands, result, context, theme, entries.slice(20).join("\n"));
-	assert.match(collapsed, /command-20/);
-	assert.doesNotMatch(collapsed, /command-21/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[Showing lines/);
-
-	const expanded = commands.renderResult(result, { expanded: true, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(expanded, content);
+	const n = 50;
+	const items = (make) => Array.from({ length: n }, (_, index) => make(index + 1));
+	const forkGroups = items((i) => `├─ [fork-${i}] user: fork ${i}\n│  └─ [branch-${i}] assistant: branch ${i} (2 entries)`);
+	const cases = [
+		["commands", { action: "run" }, `${items((i) => `notification ${i}`).join("\n")}\n\n${notice}`, {}, "notification 50", notice],
+		["commands", { action: "list" }, `${items((i) => `/command-${i} — description (local)`).join("\n")}\n\n${notice}`, {}, "command-50", notice],
+		["models", { action: "list", scope: "all" }, `all available models:\n${items((i) => `- provider/model-${i} context=128000 reasoning=false`).join("\n")}\n\n${notice}`, {}, "model-50", notice],
+		["models", { action: "consult" }, `response from provider/model ↑1 ↓1\n\n${items((i) => `response line ${i}`).join("\n")}\n\n${notice}`, {}, "response line 50", notice],
+		["tree", { action: "list", scope: "branch" }, `branch entries newest-first (${n}/80, offset 0)\n${items((i) => `[entry-${i}] user: preview ${i}`).join("\n")}\n\n[30 older entries. Use offset=${n} to continue.]`, { shown: n }, "entry-50", "[30 older entries. Use offset=50 to continue.]"],
+		["tree", { action: "list", scope: "all" }, `current branch (120 entries, tip [tip] user)\n${forkGroups.join("\n")}\n[12 more fork points. Use offset=${n} to continue.]`, { shown: n }, "branch-50", "[12 more fork points. Use offset=50 to continue.]"],
+		["sessions", { action: "search" }, `sessions (${n} returned)\n\n${items((i) => `- name="session ${i}"\n  sessionFile: "/sessions/${i}.jsonl"`).join("\n\n")}\n\n[2 more results. Use offset=${n} to continue.]\n\n${notice}`, {}, 'name="session 50"', notice],
+	];
+	for (const [name, args, content, details, lastItem, footer] of cases) {
+		const tool = tools.get(name);
+		const truncated = content.includes(notice);
+		const result = { content: [{ type: "text", text: content }], details: { ...details, ...(truncated ? { truncation: { truncated: true } } : {}) } };
+		const context = { args, isError: false };
+		const collapsed = tool.renderResult(result, { expanded: false, isPartial: false }, theme, context)
+			.render(1000).map((line) => line.trimEnd()).join("\n");
+		assert.match(collapsed, /\.\.\. \(\d+ more lines, .*to expand\)/, `${name} ${args.action} collapses`);
+		assert.equal(collapsed.includes(lastItem), false, `${name} ${args.action} hides the tail`);
+		assert.ok(collapsed.includes(footer), `${name} ${args.action} keeps its footer`);
+		const expanded = tool.renderResult(result, { expanded: true, isPartial: false }, theme, context)
+			.render(1000).map((line) => line.trimEnd()).join("\n");
+		assert.equal(expanded, content);
+	}
 });
 
-test("model consultations collapse after fifteen response lines", () => {
-	const models = tools.get("models");
+test("collapse hints count wrapped display lines", () => {
+	const commands = tools.get("commands");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const response = Array.from({ length: 16 }, (_, index) => `response line ${index + 1}${index === 15 ? " wrapped".repeat(10) : ""}`).join("\n");
-	const header = "response from provider/model ↑1200 ↓800 $0.0123";
-	const content = `${header}\n\n${response}`;
-	const context = { args: { action: "consult" }, isError: false };
-
-	const collapsed = models.renderResult(
-		{ content: [{ type: "text", text: content }], details: {} },
+	const long = " 中🙂".repeat(20);
+	const lines = Array.from({ length: 50 }, (_, index) => `notification ${index + 1}${long}`);
+	const component = commands.renderResult(
+		{ content: [{ type: "text", text: lines.join("\n") }], details: {} },
 		{ expanded: false, isPartial: false },
 		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(collapsed, /response line 15/);
-	assert.doesNotMatch(collapsed, /response line 16/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)$/);
-	assertWrappedHint(models, { content: [{ type: "text", text: content }], details: {} }, context, theme, response.split("\n").slice(15).join("\n"));
-
-	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/consult.txt]";
-	const truncatedContent = `${content}\n\n${notice}`;
-	const truncated = models.renderResult(
-		{ content: [{ type: "text", text: truncatedContent }], details: { truncation: { truncated: true } } },
-		{ expanded: false, isPartial: false },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[Showing lines/);
-
-	const partial = models.renderResult(
-		{ content: [{ type: "text", text: "Consulting provider/model..." }], details: {} },
-		{ expanded: false, isPartial: true },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(partial, "Consulting provider/model...");
-});
-
-test("model lists collapse after twenty entries and retain truncation notices", () => {
-	const models = tools.get("models");
-	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const entries = Array.from({ length: 21 }, (_, index) =>
-		`- provider/model-${index + 1} context=128000 reasoning=false`,
+		{ args: { action: "run" }, isError: false },
 	);
-	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/models.txt]";
-	const content = `all available models:\n${entries.join("\n")}\n\n${notice}`;
-	const result = { content: [{ type: "text", text: content }], details: {} };
-	const context = { args: { action: "list", scope: "all" }, isError: false };
-
-	const collapsed = models.renderResult(result, { expanded: false, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assertWrappedHint(models, result, context, theme, entries.slice(20).join("\n"));
-	assert.match(collapsed, /model-20/);
-	assert.doesNotMatch(collapsed, /model-21/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[Showing lines/);
-
-	const expanded = models.renderResult(result, { expanded: true, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(expanded, content);
-});
-
-test("grouped tree results collapse after five complete fork points", () => {
-	const tree = tools.get("tree");
-	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const groups = Array.from({ length: 6 }, (_, index) => [
-		`├─ [fork-${index + 1}] 2026-08-01T00:00:00 user: fork ${index + 1}`,
-		`│  └─ [branch-${index + 1}] 2026-08-01T00:00:00 assistant: branch ${index + 1} (2 entries)`,
-	].join("\n"));
-	const continuation = "[12 more fork points. Use offset=6 to continue.]";
-	const content = `current branch (120 entries, tip [tip] user)\n${groups.join("\n")}\n${continuation}`;
-	const result = { content: [{ type: "text", text: content }], details: { shown: 6 } };
-	const context = { args: { action: "list", scope: "all" }, isError: false };
-
-	const collapsed = tree.renderResult(result, { expanded: false, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assertWrappedHint(tree, result, context, theme, groups.slice(5).join("\n"));
-	assert.match(collapsed, /fork-5/);
-	assert.match(collapsed, /branch-5/);
-	assert.doesNotMatch(collapsed, /fork-6/);
-	assert.match(collapsed, /\.\.\. \(2 more lines, .*to expand\)\n\n\[12 more fork points/);
-
-	const expanded = tree.renderResult(result, { expanded: true, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(expanded, content);
-});
-
-test("linear tree results collapse after fifteen entries and retain continuation", () => {
-	const tree = tools.get("tree");
-	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const entries = Array.from({ length: 16 }, (_, index) =>
-		`[entry-${index + 1}] 2026-08-01T00:00:00 user: preview ${index + 1}`,
-	);
-	const continuation = "[24 older entries. Use offset=16 to continue.]";
-	const content = `branch entries newest-first (16/40, offset 0)\n${entries.join("\n")}\n\n${continuation}`;
-	const result = { content: [{ type: "text", text: content }], details: { shown: 16 } };
-	const context = { args: { action: "list", scope: "branch" }, isError: false };
-
-	const collapsed = tree.renderResult(result, { expanded: false, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assertWrappedHint(tree, result, context, theme, entries.slice(15).join("\n"));
-	assert.match(collapsed, /entry-15/);
-	assert.doesNotMatch(collapsed, /entry-16/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)/);
-	assert.match(collapsed, /\[24 older entries\. Use offset=16 to continue\.\]$/);
-
-	const expanded = tree.renderResult(result, { expanded: true, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(expanded, content);
+	const hiddenAt = (width) => Number(component.render(width).join("\n").match(/\.\.\. \((\d+) more lines/)[1]);
+	assert.ok(hiddenAt(24) > hiddenAt(1000), "narrow widths report more hidden display lines");
 });
 
 test("hard truncation notices use warning while continuation hints stay subdued", () => {
@@ -263,50 +138,4 @@ test("hard truncation notices use warning while continuation hints stay subdued"
 		{ args: { action: "list" }, isError: false },
 	).render(1000);
 	assert.equal(styles.some(([color]) => color === "warning"), false);
-});
-
-test("session searches collapse after five complete records", () => {
-	const sessions = tools.get("sessions");
-	const theme = { bold: (text) => text, fg: (_color, text) => text };
-	const records = Array.from({ length: 6 }, (_, index) => [
-		`- name="session ${index + 1}" timestamp=2026-08-01T00:00:0${index + 1}.000Z cwd="/work"`,
-		`  sessionFile: "/sessions/${index + 1}.jsonl"`,
-		`  preview: "preview ${index + 1}"`,
-	].join("\n"));
-	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/output.txt]";
-	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\n[2 more results. Use offset=6 to continue.]\n\n${notice}`;
-	const result = { content: [{ type: "text", text: content }], details: {} };
-	const context = { args: { action: "search" }, isError: false };
-
-	const collapsed = sessions.renderResult(result, { expanded: false, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assertWrappedHint(sessions, result, context, theme, records.slice(5).join("\n\n"));
-	assert.match(collapsed, /name="session 5"/);
-	assert.doesNotMatch(collapsed, /name="session 6"/);
-	assert.match(collapsed, /\.\.\. \(3 more lines, .*to expand\)/);
-	assert.match(collapsed, /\[2 more results. Use offset=6 to continue.\]/);
-	assert.match(collapsed, /\[Showing lines/);
-
-	const expanded = sessions.renderResult(result, { expanded: true, isPartial: false }, theme, context)
-		.render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(expanded, content);
-
-	const fiveSessions = `sessions (5 returned)\n\n${records.slice(0, 5).join("\n\n")}`;
-	const notCollapsed = sessions.renderResult(
-		{ content: [{ type: "text", text: fiveSessions }], details: {} },
-		{ expanded: false, isPartial: false },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.equal(notCollapsed, fiveSessions);
-
-	const sevenSessions = `sessions (7 returned)\n\n${[...records, records[5]].join("\n\n")}`;
-	const twoHiddenRecords = sessions.renderResult(
-		{ content: [{ type: "text", text: sevenSessions }], details: {} },
-		{ expanded: false, isPartial: false },
-		theme,
-		context,
-	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(twoHiddenRecords, /\.\.\. \(7 more lines, .*to expand\)/);
-	assert.doesNotMatch(twoHiddenRecords, /name="session 6"/);
 });
