@@ -496,12 +496,6 @@ test("executed commands preserve full output without duplicating captured text i
 	};
 	const runner = {
 		sessionManager,
-		getRegisteredCommands: () => [{
-			invocationName: "loud",
-			name: "loud",
-			description: "emit a large notification",
-			sourceInfo: { path: "/extension.ts", source: "test", scope: "user" },
-		}],
 		getCommand: () => ({ handler: async (_args, ctx) => ctx.ui.notify("n".repeat(60 * 1024), "info") }),
 		createCommandContext: () => commandContext,
 	};

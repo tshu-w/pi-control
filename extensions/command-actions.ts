@@ -229,7 +229,7 @@ export function patchBindCommandContext(): boolean {
 				waitForIdle: actions.waitForIdle,
 			} : null;
 			// Capture runner instance so the commands router can call
-			// getRegisteredCommands() / createCommandContext() without a separate hook.
+			// getCommand() / createCommandContext() without a separate hook.
 			state.runner = actions ? this : null;
 			return current.call(this, actions);
 		};

@@ -19,7 +19,7 @@ const fakeActions = () => ({
 });
 
 test("ExtensionRunner still exposes the patched/used private methods", () => {
-	for (const method of ["bindCommandContext", "getRegisteredCommands", "getCommand", "createCommandContext"]) {
+	for (const method of ["bindCommandContext", "getCommand", "createCommandContext"]) {
 		assert.equal(typeof ExtensionRunner.prototype[method], "function", `ExtensionRunner.prototype.${method} missing — pi private API changed`);
 	}
 });

@@ -23,7 +23,6 @@ function setup(command, { hasUI = true } = {}) {
 	};
 	const runner = {
 		sessionManager,
-		getRegisteredCommands: () => [command],
 		getCommand: (name) => name === command.invocationName ? command : undefined,
 		createCommandContext: () => commandContext,
 	};
@@ -169,8 +168,8 @@ test("commands reject unavailable, missing, and unknown command requests", async
 	let unboundTool;
 	registerCommandsRouter({ registerTool(value) { unboundTool = value; } });
 	await assert.rejects(
-		unboundTool.execute("unavailable", { action: "list" }, undefined, undefined, { sessionManager: {} }),
-		/Commands are unavailable in this Pi runtime/,
+		unboundTool.execute("unavailable", { action: "run", name: "known" }, undefined, undefined, { sessionManager: {} }),
+		/Running commands is unavailable in this Pi runtime/,
 	);
 });
 

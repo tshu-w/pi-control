@@ -2,13 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { DEFAULT_MAX_BYTES, ExtensionRunner } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { interopDefault: true });
 const { registerModelsRouter } = await jiti.import("../extensions/model.ts");
 const { registerCommandsRouter } = await jiti.import("../extensions/commands.ts");
-const { patchBindCommandContext } = await jiti.import("../extensions/command-actions.ts");
 
 const models = Array.from({ length: 45 }, (_, i) => ({
 	provider: i % 3 === 0 ? "special" : "regular",
@@ -25,18 +24,21 @@ const commands = models.map((model, i) => ({
 
 function setup(kind, items = kind === "models" ? models : commands, scoped = []) {
 	let tool;
-	const pi = { registerTool(value) { tool = value; }, on() {} };
+	const pi = {
+		registerTool(value) { tool = value; },
+		on() {},
+		getCommands: () => [
+			{ name: "template", source: "prompt", sourceInfo: {} },
+			...items.map(({ invocationName, description, sourceInfo }) => ({ name: invocationName, description, source: "extension", sourceInfo })),
+		],
+	};
 	let ctx;
 	if (kind === "models") {
 		registerModelsRouter(pi);
 		ctx = { scopedModels: scoped.map(model => ({ model })), modelRegistry: { getAvailable: async () => items } };
 	} else {
 		registerCommandsRouter(pi);
-		const sessionManager = {};
-		const runner = { sessionManager, getRegisteredCommands: () => items };
-		patchBindCommandContext();
-		ExtensionRunner.prototype.bindCommandContext.call(runner, {});
-		ctx = { sessionManager };
+		ctx = { sessionManager: {} };
 	}
 	return { tool, list: (params = {}) => tool.execute("list", { action: "list", ...params }, undefined, undefined, ctx) };
 }

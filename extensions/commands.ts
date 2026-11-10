@@ -200,23 +200,13 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 		},
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			const runner = getRunner(ctx);
-			if (!runner) {
-				throw new Error("Commands are unavailable in this Pi runtime. Ask the user to run the slash command.");
-			}
-
 			switch (params.action) {
 				case "list": {
-					const all = runner.getRegisteredCommands() as Array<{
-						invocationName: string;
-						name: string;
-						description?: string;
-						sourceInfo: { path: string; source: string; scope: string };
-					}>;
+					const all = pi.getCommands().filter((c) => c.source === "extension");
 					const filter = (params.filter ?? "").toLowerCase();
 					const filtered = filter
 						? all.filter(c =>
-							c.invocationName.toLowerCase().includes(filter) ||
+							c.name.toLowerCase().includes(filter) ||
 							(c.description ?? "").toLowerCase().includes(filter))
 						: all;
 
@@ -235,7 +225,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					}
 
 					const lines = page.map(c => {
-						const parts = [`/${c.invocationName}`];
+						const parts = [`/${c.name}`];
 						if (c.description) parts.push(`— ${c.description}`);
 						parts.push(`(${c.sourceInfo.source})`);
 						return parts.join(" ");
@@ -249,7 +239,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						details: {
 							total, offset, limit,
 							commands: page.map(c => ({
-								invocationName: c.invocationName,
+								invocationName: c.name,
 								source: c.sourceInfo.source,
 								path: c.sourceInfo.path,
 								scope: c.sourceInfo.scope,
@@ -259,6 +249,10 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 				}
 
 				case "run": {
+					const runner = getRunner(ctx);
+					if (!runner) {
+						throw new Error("Running commands is unavailable in this Pi runtime. Ask the user to run the slash command.");
+					}
 					const name = (params.name ?? "").trim();
 					const args = params.args ?? "";
 					if (!name) {
