@@ -47,6 +47,8 @@ test("deferred: runs unarmed, rejects a second deferred, blocked by other kinds"
 		reason: "another pending action (switch-a) is already queued",
 	}, "a later deferred must not drop the pending one");
 	await runPending(owner, notify);
+	assert.deepEqual(calls, [], "runPending leaves deferred actions to the settled handler");
+	assert.equal(await runPendingDeferredInline(owner, notify), true);
 	assert.deepEqual(calls, [["deferred-a"]], "the first deferred runs, without ops");
 	assert.equal(hasPending(owner), false);
 
@@ -54,7 +56,7 @@ test("deferred: runs unarmed, rejects a second deferred, blocked by other kinds"
 	behavior.throwError = null;
 	const failing = scheduleDeferred(owner, "switch-fail", async () => { throw new Error("boom"); });
 	assert.equal(failing.ok, true);
-	await runPending(owner, notify);
+	await runPendingDeferredInline(owner, notify);
 	assert.equal(notes[0][0], "error");
 	assert.equal(hasPending(owner), false);
 	notes.length = 0;

@@ -13,8 +13,8 @@ export function isOutputTruncated(details: unknown): boolean {
 
 export function styleToolOutput(text: string, truncated: boolean, theme: Theme): string {
 	if (!truncated) return theme.fg("toolOutput", text);
-	const separatedFooterStart = Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line "));
-	const footerStart = separatedFooterStart >= 0 ? separatedFooterStart : /^(?:\[Output truncated:|\[Showing |\[Line )/.test(text) ? 0 : -1;
+	const separatedFooterStart = Math.max(text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line "));
+	const footerStart = separatedFooterStart >= 0 ? separatedFooterStart : /^(?:\[Showing |\[Line )/.test(text) ? 0 : -1;
 	if (footerStart < 0) return theme.fg("toolOutput", text);
 	const noticeStart = separatedFooterStart >= 0 ? separatedFooterStart + 2 : footerStart;
 	const nextLine = text.indexOf("\n", noticeStart);

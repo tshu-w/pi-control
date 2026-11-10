@@ -1,40 +1,7 @@
 /**
- * Commands router — dispatch arbitrary third-party slash commands as tool calls.
- *
- * pi exposes `getRegisteredCommands()` / `createCommandContext()` on ExtensionRunner.
- * We list them via `commands(action="list")` and invoke them via `commands(action="run")`.
- *
- * Safety model (capability mediation, not source-based deny lists):
- *
- *   1. The five session-transition closures on ExtensionCommandContext
- *      (newSession / fork / switchSession / navigateTree / reload) are wrapped.
- *      A handler calling them schedules a deferred raw op (executed on
- *      agent_settled, reusing the existing pi-control queue) and
- *      throws DeferredTransitionRequested to unwind the handler — so it cannot
- *      keep running under the false assumption that the session was replaced.
- *
- *   2. ui.notify / ui.setStatus are captured into the tool result so the LLM
- *      can see what the command actually did. Without this the model would
- *      see an empty result for commands like /ssh which only notify. Captured
- *      notifications are not also forwarded to the UI, which would display
- *      the same message twice alongside the tool result.
- *
- *   3. ui.select / ui.confirm / ui.input throw InteractiveUIUnavailable when
- *      !ctx.hasUI. We do NOT fall through to noOpUIContext: a noop return
- *      could trick handlers into "user cancelled" branches that perform half
- *      a cleanup before throwing.
- *
- * Successful result statuses surfaced to the model:
- *   - completed            — handler returned normally
- *   - scheduled_transition — handler scheduled a session transition (deferred)
- *
- * Missing capabilities, invalid requests, scheduling conflicts, and handler
- * failures throw tool errors so Pi and custom renderers display them as errors.
- *
- * What we deliberately do NOT do in v1:
- *   - timeout-as-cancel (Promise.race does not actually cancel)
- *   - static allow/deny by sourceInfo (use capability mediation instead)
- *   - re-entrancy serialization beyond the existing single-slot queue
+ * Commands router: list extension slash commands and run them as tool calls.
+ * Session-changing ctx methods are deferred to agent_settled, and ui.notify
+ * output is returned as the tool result.
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -62,7 +29,6 @@ const MAX_CAPTURE_ITEMS = 100;
 
 interface Capture {
 	notifications: Array<{ level: "info" | "warning" | "error"; message: string }>;
-	statusUpdates: Array<{ key: string; text: string | undefined }>;
 }
 
 interface MediatedContext {
@@ -74,7 +40,7 @@ interface MediatedContext {
 /**
  * Wrap a real ExtensionCommandContext so that:
  *   - the five session-transition methods reschedule + throw
- *   - ui.notify/setStatus are captured
+ *   - ui.notify is captured
  *   - ui.select/confirm/input throw if no real UI
  *
  * We construct via Object.create so the underlying ctx remains functional for
@@ -87,12 +53,6 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	let transitionRequest: DeferredTransitionRequested | null = null;
 
 	const scheduleTransition = (op: string, runner: () => Promise<{ cancelled?: boolean } | void>): never => {
-		// `ops` should be non-null when we're here (the patch is what wired ctx in
-		// the first place), but be defensive: report through the sentinel path.
-		if (!ops) {
-			transitionRequest = new DeferredTransitionRequested(op, "command ops unavailable");
-			throw transitionRequest;
-		}
 		const result = scheduleRawOp(ctx, op, runner);
 		if (!result.ok) {
 			transitionRequest = new DeferredTransitionRequested(op, result.reason);
@@ -109,14 +69,6 @@ function mediateCtx(ctx: any, capture: Capture): MediatedContext {
 	mediatedUI.notify = (message: string, type: "info" | "warning" | "error" = "info") => {
 		if (capture.notifications.length < MAX_CAPTURE_ITEMS) {
 			capture.notifications.push({ level: type, message: String(message) });
-		}
-	};
-	mediatedUI.setStatus = (key: string, text: string | undefined) => {
-		if (capture.statusUpdates.length < MAX_CAPTURE_ITEMS) {
-			capture.statusUpdates.push({ key: String(key), text: text === undefined ? undefined : String(text) });
-		}
-		if (typeof ctx.ui?.setStatus === "function") {
-			try { ctx.ui.setStatus(key, text); } catch { /* best-effort */ }
 		}
 	};
 	mediatedUI.select = async (...args: any[]) => {
@@ -251,7 +203,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 			}
 
 			if (context.args.action === "run") {
-				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
+				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const lines = text.slice(0, bodyEnd).split("\n");
 				while (lines.at(-1) === "") lines.pop();
@@ -341,7 +293,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					}
 
 					const realCtx = runner.createCommandContext();
-					const capture: Capture = { notifications: [], statusUpdates: [] };
+					const capture: Capture = { notifications: [] };
 
 					let mediated: MediatedContext | null = null;
 					try {
@@ -389,8 +341,6 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 					}
 				}
 			}
-
-			throw new Error(`Unknown action: ${params.action}`);
 		},
 	}, {
 		tempPrefix: "pi-control-command",

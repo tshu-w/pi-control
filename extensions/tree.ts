@@ -126,7 +126,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 			if (shown === undefined) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
 
 			const lines = text.split("\n");
-			const hardFooterIndex = truncated ? lines.findIndex((line) => /^(?:\[Output truncated:|\[Showing |\[Line )/.test(line)) : -1;
+			const hardFooterIndex = truncated ? lines.findIndex((line) => /^(?:\[Showing |\[Line )/.test(line)) : -1;
 			const retainedLines = lines.slice(1, hardFooterIndex >= 0 ? hardFooterIndex : undefined).filter(Boolean);
 			const actualShown = hardFooterIndex >= 0 ? retainedLines.length : shown;
 			if (actualShown <= 15) return new Text(styleToolOutput(text, truncated, theme), 0, 0);
@@ -158,13 +158,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 
 						const tree = ctx.sessionManager.getTree();
 						const branchEntries = ctx.sessionManager.getBranch();
-						if (!tree || tree.length === 0 || branchEntries.length === 0) {
-							return {
-								content: [{ type: "text", text: "No entries in session." }],
-								details: { scope: "all", total: 0, shown: 0, offset, limit, hasMore: false, totalSideBranches: 0 },
-							};
-						}
-
 						const getLabel = (id: string) => ctx.sessionManager.getLabel(id);
 						const overview = buildGroupedOverview(tree as any[], branchEntries as any[], getLabel, offset, limit);
 						if (!overview) {
@@ -229,8 +222,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						const label = ctx.sessionManager.getLabel(e.id);
 						return label ? `${preview}  @${label}` : preview;
 					});
-					const headerLabel = scope === "branch" ? "branch entries newest-first" : "all entries";
-					const header = `${headerLabel} (${page.length}/${total}, offset ${offset})`;
+					const header = `branch entries newest-first (${page.length}/${total}, offset ${offset})`;
 					const remaining = total - offset - page.length;
 					const continuation = remaining > 0
 						? `\n\n[${remaining} older ${remaining === 1 ? "entry" : "entries"}. Use offset=${offset + page.length} to continue.]`
@@ -450,9 +442,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						details: { scheduled: "compact" },
 					};
 				}
-
-				default:
-					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}));

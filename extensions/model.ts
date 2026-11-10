@@ -1,5 +1,4 @@
 import { StringEnum, type Usage } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
 import { keyText, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -22,16 +21,11 @@ function scopedModels(ctx: any, available: any[]): any[] {
  * If `provider` is given, looks up directly via the registry.
  * If not, prefers a scoped match (matching settings.json `enabledModels`),
  * then falls back to any available model with the same id.
- *
- * `includeUnregistered` (only for consult) lets callers fall back to
- * `getModel(provider, modelId)` so consult can hit a model the registry
- * doesn't yet know but that does have an API key configured.
  */
 async function resolveModel(
 	ctx: any,
 	provider: string | undefined,
 	modelId: string,
-	opts?: { includeUnregistered?: boolean },
 ): Promise<{ model: any | null; error?: string }> {
 	const available = await ctx.modelRegistry.getAvailable();
 	const providerMap = new Map<string, string>();
@@ -61,9 +55,7 @@ async function resolveModel(
 
 	if (resolvedProvider) {
 		const found = ctx.modelRegistry.find(resolvedProvider, resolvedModelId);
-		if (found) return { model: found };
-		if (opts?.includeUnregistered) return { model: getModel(resolvedProvider as any, resolvedModelId) };
-		return { model: null };
+		return { model: found ?? null };
 	}
 
 	const findMatches = (models: any[]) => models.filter((m: any) => m.id === resolvedModelId || `${m.provider}/${m.id}` === resolvedModelId);
@@ -155,7 +147,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 			if (context.args.action === "consult") {
 				const separator = text.indexOf("\n\n");
 				if (separator < 0) return new Text(theme.fg("toolOutput", text), 0, 0);
-				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Output truncated:"), text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
+				const footerStart = truncated ? Math.max(text.lastIndexOf("\n\n[Showing "), text.lastIndexOf("\n\n[Line ")) : -1;
 				const bodyEnd = footerStart >= 0 ? footerStart : text.length;
 				const responseLines = text.slice(separator + 2, bodyEnd).split("\n");
 				while (responseLines.at(-1) === "") responseLines.pop();
@@ -247,11 +239,8 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						throw new Error(`No API key for ${model.provider}/${model.id}.`);
 					}
 
-					// Deferred switch: the model change (and thinking level) applies on
-					// agent_settled, so each turn belongs to exactly one model and the
-					// message reliably starts the next turn. Mid-turn switching relied
-					// on the new model choosing to end the turn, which newer models
-					// no longer do: queued follow-ups accumulated instead.
+					// The model change (and thinking level) applies on agent_settled, so
+					// each turn belongs to exactly one model.
 					const scheduled = scheduleDeferred(ctx, `model switch to ${model.provider}/${model.id}`, async () => {
 						const ok = await pi.setModel(model);
 						if (!ok) throw new Error(`setModel failed for ${model.provider}/${model.id}`);
@@ -276,7 +265,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						throw new Error("`modelId` and `prompt` are required for consult.");
 					}
 
-					const resolved = await resolveModel(ctx, params.provider, params.modelId, { includeUnregistered: true });
+					const resolved = await resolveModel(ctx, params.provider, params.modelId);
 					if (!resolved.model) {
 						throw new Error(resolved.error ?? `Model not found: ${params.provider ?? "(auto)"}/${params.modelId}`);
 					}
@@ -321,9 +310,6 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						usage,
 					};
 				}
-
-				default:
-					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}, {

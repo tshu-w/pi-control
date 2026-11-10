@@ -22,7 +22,7 @@ const { withToolOutputContract } = await jiti.import("../extensions/tool-output.
 
 // The limits bound the content; the truncation notice sits on top of it.
 function assertContentBounded(text) {
-	const content = text.split(/\n\n\[(?:Output truncated:|Showing |Line )/)[0];
+	const content = text.split(/\n\n\[(?:Showing |Line )/)[0];
 	assert.ok(Buffer.byteLength(content) <= MAX_BYTES, `expected <= ${MAX_BYTES} bytes`);
 	assert.ok(content.split("\n").length <= MAX_LINES, `expected <= ${MAX_LINES} lines`);
 }
@@ -82,7 +82,7 @@ test("oversized first lines retain no content using native head truncation", asy
 		},
 	});
 	const result = await tool.execute("id", {}, undefined, undefined, {});
-	const content = assertBounded(result).split(/\n\n\[(?:Output truncated:|Showing |Line )/)[0];
+	const content = assertBounded(result).split(/\n\n\[(?:Showing |Line )/)[0];
 	const truncation = result.details.truncation;
 	assert.equal(content, "");
 	assert.equal(truncation.content, "");

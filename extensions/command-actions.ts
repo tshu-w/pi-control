@@ -61,7 +61,7 @@ export interface CommandOps {
 	reload: () => Promise<void>;
 	/** Resolves when the agent is idle; used to avoid tearing down a turn that
 	 *  raced the public settled event into the settled→timer window. */
-	waitForIdle?: () => Promise<void>;
+	waitForIdle: () => Promise<void>;
 }
 
 // ── Session-scoped state ────────────────────────────────────
@@ -264,9 +264,11 @@ export async function runPending(
 ): Promise<void> {
 	// Claim the action into inFlight: the session's single slot stays occupied
 	// for the whole execution (idle wait included).
+	// Deferred actions run inline on agent_settled; leave one scheduled by a
+	// racing turn for its own settled event.
 	const state = stateFor(owner);
 	const action = state?.pending;
-	if (!state || !action) return;
+	if (!state || !action || action.kind === "deferred") return;
 	state.pending = null;
 	state.inFlight = { kind: action.kind, label: "label" in action && action.label ? action.label : action.kind };
 	try {
@@ -278,7 +280,7 @@ export async function runPending(
 
 async function dispatchPending(
 	state: CommandState,
-	action: PendingAction,
+	action: Exclude<PendingAction, { kind: "deferred" }>,
 	notify?: (msg: string, level: "info" | "warning" | "error") => void,
 	runtime?: RuntimeContext,
 ): Promise<void> {
@@ -297,13 +299,6 @@ async function dispatchPending(
 		else console.warn(`[pi-control] ${message}`);
 	};
 
-	// "deferred" uses only public pi APIs; every other kind needs captured ops.
-	if (action.kind === "deferred") {
-		try {
-			await action.exec();
-		} catch (e) { reportError(`Deferred ${action.label} failed`, e); }
-		return;
-	}
 	const ops = state.ops;
 	if (!ops) return;
 
@@ -313,17 +308,13 @@ async function dispatchPending(
 	// turn (dispose/abort) mid-flight. A TOCTOU window remains between this
 	// resolve and the transition's first await — closing it fully needs an
 	// upstream pre-publication seam; this is the best a pure extension can do.
-	try {
-		await ops.waitForIdle?.();
-	} catch { /* proceed: transition handles its own errors */ }
+	await ops.waitForIdle();
 
-	// Builds a withSession option that injects `message` into the replaced session.
-	// Pass deliverAs: "followUp" defensively in case the target session happens to be
-	// streaming; non-streaming sessions ignore deliverAs so it is a no-op otherwise.
+	// Builds a withSession option that sends `message` in the replaced session.
 	const withMessage = (message: string | undefined) => {
 		if (!message) return undefined;
 		return async (newCtx: any) => {
-			await newCtx.sendUserMessage(message, { deliverAs: "followUp" });
+			await newCtx.sendUserMessage(message);
 		};
 	};
 

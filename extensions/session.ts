@@ -63,7 +63,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 					.map((section) => theme.fg("toolOutput", section));
 				visible.push(theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`));
 				const footerSections = sections.filter((section) =>
-					/^(?:\[Output truncated:|\[Showing |\[Line )/.test(section) || /^\[\d+ more results\./.test(section),
+					/^(?:\[Showing |\[Line )/.test(section) || /^\[\d+ more results\./.test(section),
 				);
 				visible.push(...footerSections.map((section) => styleToolOutput(section, truncated, theme)));
 				return new Text(visible.join("\n\n"), 0, 0);
@@ -75,7 +75,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 				case "info": {
 					const model = ctx.model;
 					const thinkingLevel = pi.getThinkingLevel();
-					const usage = ctx.getContextUsage?.();
+					const usage = ctx.getContextUsage();
 					const sessionFile = ctx.sessionManager.getSessionFile();
 					const sessionName = ctx.sessionManager.getSessionName();
 					const entries = ctx.sessionManager.getEntries();
@@ -239,9 +239,6 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						details: { scheduled: "reload", messageScheduled: params.message !== undefined },
 					});
 				}
-
-				default:
-					throw new Error(`Unknown action: "${params.action}"`);
 			}
 		},
 	}));

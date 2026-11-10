@@ -62,7 +62,6 @@ test("models reject invalid requests and unresolved targets before scheduling or
 		[{ action: "consult", modelId: "one/shared", provider: "two", prompt: "review" }, /Provider mismatch/],
 		[{ action: "switch", modelId: "shared" }, /Ambiguous.*one\/shared.*two\/shared/],
 		[{ action: "consult", modelId: "shared", prompt: "review" }, /Ambiguous.*one\/shared.*two\/shared/],
-		[{ action: "unknown" }, /Unknown action/],
 	]) {
 		await assert.rejects(execute(params, ctx), pattern);
 	}
@@ -94,7 +93,6 @@ test("tree rejects invalid parameters, targets and label collisions without muta
 		[{ action: "fork" }, /entryId.*required/],
 		[{ action: "fork", entryId: "missing" }, /Entry not found/],
 		[{ action: "fork", entryId: "entry-2" }, /Fork requires a user-message entry/],
-		[{ action: "unknown" }, /Unknown action/],
 	]) {
 		await assert.rejects(execute(params, ctx), pattern);
 	}
@@ -112,7 +110,6 @@ test("transition rejection preserves the previously scheduled operation", async 
 	const tree = register(registerTreeRouter);
 	const models = register(registerModelsRouter);
 	const ctx = treeContext();
-	await assert.rejects(sessions({ action: "unknown" }, ctx), /Unknown action/);
 	await assert.rejects(sessions({ action: "new" }, ctx), /Command context not captured.*\/new/);
 	await assert.rejects(sessions({ action: "reload" }, ctx), /Command context not captured.*\/reload/);
 	await assert.rejects(tree({ action: "navigate", target: "bookmark" }, ctx), /Command context not captured.*\/tree/);

@@ -77,14 +77,14 @@ test("command runs collapse output after fifteen lines", () => {
 		theme,
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
+	assert.match(truncated, /to expand\)\n\n\[Showing lines/);
 });
 
 test("command lists collapse after twenty entries and retain truncation notices", () => {
 	const commands = tools.get("commands");
 	const theme = { bold: (text) => text, fg: (_color, text) => text };
 	const entries = Array.from({ length: 21 }, (_, index) => `/command-${index + 1} — description (source)`);
-	const notice = "[Output truncated: 100 lines. Narrow the filter or use pagination to continue.]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/output.txt]";
 	const content = `${entries.join("\n")}\n\n${notice}`;
 	const result = { content: [{ type: "text", text: content }], details: {} };
 	const context = { args: { action: "list" }, isError: false };
@@ -94,7 +94,7 @@ test("command lists collapse after twenty entries and retain truncation notices"
 	assertWrappedHint(commands, result, context, theme, entries.slice(20).join("\n"));
 	assert.match(collapsed, /command-20/);
 	assert.doesNotMatch(collapsed, /command-21/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[Showing lines/);
 
 	const expanded = commands.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
@@ -118,7 +118,6 @@ test("model consultations collapse after fifteen response lines", () => {
 	assert.match(collapsed, /response line 15/);
 	assert.doesNotMatch(collapsed, /response line 16/);
 	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)$/);
-	assert.doesNotMatch(collapsed, /Output truncated/);
 	assertWrappedHint(models, { content: [{ type: "text", text: content }], details: {} }, context, theme, response.split("\n").slice(15).join("\n"));
 
 	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/consult.txt]";
@@ -129,7 +128,7 @@ test("model consultations collapse after fifteen response lines", () => {
 		theme,
 		context,
 	).render(1000).map((line) => line.trimEnd()).join("\n");
-	assert.match(truncated, /to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
+	assert.match(truncated, /to expand\)\n\n\[Showing lines/);
 
 	const partial = models.renderResult(
 		{ content: [{ type: "text", text: "Consulting provider/model..." }], details: {} },
@@ -156,7 +155,7 @@ test("model lists collapse after twenty entries and retain truncation notices", 
 	assertWrappedHint(models, result, context, theme, entries.slice(20).join("\n"));
 	assert.match(collapsed, /model-20/);
 	assert.doesNotMatch(collapsed, /model-21/);
-	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[(?:Output truncated:|Showing lines)/);
+	assert.match(collapsed, /\.\.\. \(1 more lines, .*to expand\)\n\n\[Showing lines/);
 
 	const expanded = models.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
@@ -274,7 +273,7 @@ test("session searches collapse after five complete records", () => {
 		`  sessionFile: "/sessions/${index + 1}.jsonl"`,
 		`  preview: "preview ${index + 1}"`,
 	].join("\n"));
-	const notice = "[Output truncated: 100 lines. Narrow the filter or use pagination to continue.]";
+	const notice = "[Showing lines 1-20 of 100. Full output: /tmp/output.txt]";
 	const content = `sessions (6 returned)\n\n${records.join("\n\n")}\n\n[2 more results. Use offset=6 to continue.]\n\n${notice}`;
 	const result = { content: [{ type: "text", text: content }], details: {} };
 	const context = { args: { action: "search" }, isError: false };
@@ -286,7 +285,7 @@ test("session searches collapse after five complete records", () => {
 	assert.doesNotMatch(collapsed, /name="session 6"/);
 	assert.match(collapsed, /\.\.\. \(3 more lines, .*to expand\)/);
 	assert.match(collapsed, /\[2 more results. Use offset=6 to continue.\]/);
-	assert.match(collapsed, /\[(?:Output truncated:|Showing lines)/);
+	assert.match(collapsed, /\[Showing lines/);
 
 	const expanded = sessions.renderResult(result, { expanded: true, isPartial: false }, theme, context)
 		.render(1000).map((line) => line.trimEnd()).join("\n");
