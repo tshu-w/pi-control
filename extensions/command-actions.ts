@@ -201,7 +201,7 @@ export async function runPendingDeferredInline(owner: CommandOwner, notify?: Not
 	try {
 		await action.exec();
 	} catch (e) {
-		const message = `Deferred ${action.label} failed: ${e}`;
+		const message = `${action.label[0]!.toUpperCase()}${action.label.slice(1)} failed: ${e instanceof Error ? e.message : String(e)}`;
 		if (notify) notify(message, "error");
 		else console.error(`[pi-control] ${message}`);
 	} finally {

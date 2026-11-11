@@ -242,7 +242,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 					// each turn belongs to exactly one model.
 					const scheduled = scheduleDeferred(ctx, `model switch to ${model.provider}/${model.id}`, async () => {
 						const ok = await pi.setModel(model);
-						if (!ok) throw new Error(`setModel failed for ${model.provider}/${model.id}`);
+						if (!ok) throw new Error(`No API key for ${model.provider}/${model.id}.`);
 						if (params.thinkingLevel) pi.setThinkingLevel(params.thinkingLevel);
 						// Upstream limit: ExtensionAPI.sendUserMessage returns void, so
 						// delivery cannot be awaited; failures surface as extension errors.

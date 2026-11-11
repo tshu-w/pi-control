@@ -211,7 +211,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 						throw new Error("`message` must contain at least one non-whitespace character.");
 					}
 					if (hasPending(ctx)) {
-						throw new Error("A session transition is already scheduled. Use the transition's `message` parameter instead of queue_message.");
+						throw new Error("A session change is already scheduled; it takes effect after this turn. Pass follow-up text in that call's `message` next time.");
 					}
 					const deliverAs = params.deliverAs ?? "followUp";
 					// Upstream limit: ExtensionAPI.sendUserMessage returns void (core

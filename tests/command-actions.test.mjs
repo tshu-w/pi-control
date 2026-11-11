@@ -198,7 +198,7 @@ test("deferred actions run inline on agent_settled, before external listeners", 
 	const notes = [];
 	scheduleDeferred(owner, "model switch", async () => { throw new Error("boom"); });
 	assert.equal(await runPendingDeferredInline(owner, (msg, level) => notes.push([level, msg])), true);
-	assert.equal(notes[0][0], "error");
+	assert.deepEqual(notes, [["error", "Model switch failed: boom"]]);
 
 	schedule({ kind: "reload" });
 	assert.equal(await runPendingDeferredInline(owner), false, "session actions are left for the bridge");

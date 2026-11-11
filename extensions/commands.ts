@@ -278,7 +278,7 @@ export function registerCommandsRouter(pi: ExtensionAPI) {
 						if (swallowedTransition) {
 							if (mediated.clearOwnPendingRawOp()) {
 								const label = swallowedTransition.label;
-								throw new Error(`it continued after requesting a ${label}, so the ${label} was cancelled`);
+								throw new Error(`the ${label} it requested was cancelled`);
 							}
 							throw swallowedTransition;
 						}

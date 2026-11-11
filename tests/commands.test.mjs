@@ -97,7 +97,7 @@ test("command failures reject while scheduled transitions remain successful", as
 					try { await ctx.reload(); } catch {}
 				},
 			},
-			pattern: /\/swallow failed: it continued after requesting a reload, so the reload was cancelled$/,
+			pattern: /\/swallow failed: the reload it requested was cancelled$/,
 		},
 	];
 
