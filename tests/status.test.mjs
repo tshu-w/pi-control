@@ -28,7 +28,6 @@ function setup() {
 	});
 	const ctx = {
 		model: modelA,
-		getContextUsage: () => ({ percent: 20 }),
 		sessionManager: {
 			appendMessage: forbidPersistence,
 			appendCustomEntry: forbidPersistence,
@@ -36,9 +35,8 @@ function setup() {
 		},
 	};
 	return {
-		async observe(model = modelA, percent = 20, messages = [{ role: "user", content: "Hello", timestamp: 1 }]) {
+		async observe(model = modelA, messages = [{ role: "user", content: "Hello", timestamp: 1 }]) {
 			ctx.model = model;
-			ctx.getContextUsage = () => ({ percent });
 			const original = structuredClone(messages);
 			const start = sent.length;
 			const result = await handlers.get("context")[0]({ type: "context", messages }, ctx);
@@ -78,7 +76,7 @@ test("actual switches name the previous and current models exactly and do not re
 		{ role: "user", content: "Next", timestamp: 3 },
 		{ role: "assistant", content: [], timestamp: 4 },
 	];
-	const { status, messages: updated } = await observe(modelB, 20, messages);
+	const { status, messages: updated } = await observe(modelB, messages);
 	assert.equal(status.content, "[pi-control] Switched from model provider-a/model-a to model provider-b/model-b.");
 	assert.equal(updated.at(-1), status, "append after existing history");
 	assert.equal((await observe({ ...modelB })).status, undefined);
@@ -87,73 +85,43 @@ test("actual switches name the previous and current models exactly and do not re
 	assert.equal((await observe(sameId)).status.content, "[pi-control] Switched from model provider-a/model-a to model provider-b/model-a.");
 });
 
-test("context thresholds retain rounding, buckets, deduplication and re-entry behavior", async () => {
-	const { observe } = setup();
-	for (const [percent, expected] of [
-		[69.4, undefined],
-		[69.5, "Context usage: 70%."],
-		[84.4, undefined],
-		[84.5, "Context usage: 85%."],
-		[94.4, undefined],
-		[94.5, "Context usage: 95%."],
-		[110, undefined],
-		[90, "Context usage: 90%."],
-		[75, "Context usage: 75%."],
-		[69, undefined],
-		[70, "Context usage: 70%."],
-		[20, undefined],
-		[110, "Context usage: 100%."],
-	]) {
-		assert.equal((await observe(modelA, percent)).status?.content,
-			expected === undefined ? undefined : `[pi-control] ${expected}`, `usage=${percent}`);
-	}
-});
-
 test("successive tool turns retain status messages without changing the cached prefix", async () => {
 	const { observe } = setup();
 	let history = [{ role: "user", content: "Work", timestamp: 1 }];
-	for (const percent of [71, 72, 85, 86]) {
+	await observe(modelA, history);
+	for (const [index, model] of [modelB, modelB, modelA].entries()) {
 		const prefix = structuredClone(history);
 		history.push(
-			{ role: "assistant", content: [{ type: "toolCall", id: `call-${percent}`, name: "read", arguments: {} }], timestamp: percent },
-			{ role: "toolResult", toolCallId: `call-${percent}`, content: [{ type: "text", text: "result" }], timestamp: percent },
+			{ role: "assistant", content: [{ type: "toolCall", id: `call-${index}`, name: "read", arguments: {} }], timestamp: index + 2 },
+			{ role: "toolResult", toolCallId: `call-${index}`, content: [{ type: "text", text: "result" }], timestamp: index + 2 },
 		);
-		const result = await observe(modelA, percent, history);
+		const result = await observe(model, history);
 		history = result.messages;
 		assert.deepEqual(history.slice(0, prefix.length), prefix);
-		assert.equal(history.filter(message => message.customType === "pi-status").length, percent < 85 ? 1 : 2);
 	}
-});
-
-test("initial high usage still notifies and a simultaneous switch preserves threshold text", async () => {
-	const { observe } = setup();
-	assert.equal((await observe(modelA, 70)).status.content, "[pi-control] Context usage: 70%.");
-	assert.equal((await observe(modelB, 85)).status.content,
-		"[pi-control] Switched from model provider-a/model-a to model provider-b/model-b. | Context usage: 85%.");
-	assert.equal((await observe(modelB, 90)).status, undefined);
+	assert.equal(history.filter(message => message.customType === "pi-status").length, 2);
 });
 
 test("switch status appends when there is no user message", async () => {
 	const { observe } = setup();
 	await observe();
-	const { status, messages } = await observe(modelB, 20, [{ role: "assistant", content: [], timestamp: 1 }]);
+	const { status, messages } = await observe(modelB, [{ role: "assistant", content: [], timestamp: 1 }]);
 	assert.ok(status);
 	assert.equal(messages.at(-1), status);
 });
 
 test("empty context and missing model do not initialize model tracking", async () => {
 	const { observe } = setup();
-	assert.equal((await observe(modelA, 20, [])).status, undefined);
+	assert.equal((await observe(modelA, [])).status, undefined);
 	assert.equal((await observe(null)).status, undefined);
 	assert.equal((await observe(modelB)).status, undefined);
 	assert.equal((await observe(modelA)).status.content, "[pi-control] Switched from model provider-b/model-b to model provider-a/model-a.");
 });
 
-test("shutdown resets model and threshold tracking", async () => {
+test("shutdown resets model tracking", async () => {
 	const { observe, shutdown } = setup();
-	await observe(modelA, 85);
-	await observe(modelB, 85);
+	await observe(modelA);
 	await shutdown();
-	assert.equal((await observe(modelA, 85)).status.content, "[pi-control] Context usage: 85%.");
-	assert.equal((await observe(modelA, 85)).status, undefined);
+	assert.equal((await observe(modelB)).status, undefined);
+	assert.equal((await observe(modelA)).status.content, "[pi-control] Switched from model provider-b/model-b to model provider-a/model-a.");
 });

@@ -17,12 +17,9 @@ Ask for "my previous dev session" or "try another model from here", and the agen
 
 **Runtime status**
 
-Notifies the model on state changes:
+When the model changes, the agent is told on its next request: `[pi-control] Switched from model <previous> to model <current>.`
 
-- **Model switch** (excluding the first turn): `[pi-control] Switched from model <previous> to model <current>.`
-- **Context threshold crossing** (70 / 85 / 95%): `[pi-control] Context usage: <n>%.`
-
-Full runtime details available via `sessions(action='info')`.
+Full runtime details, including context usage, are available via `sessions(action='info')`.
 
 ## Install
 

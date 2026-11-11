@@ -26,7 +26,6 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use tree(action='list') or tree(action='search') when the target entry is unknown.",
 			"Use tree(action='navigate') for user-approved changes to the active branch.",
-			"Use tree(action='compact') when context usage is high.",
 			"tree with action='navigate' or 'fork' takes effect after the current turn; finish your turn after calling it.",
 		],
 		parameters: Type.Object({

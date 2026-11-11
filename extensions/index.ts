@@ -7,8 +7,8 @@
  *   models    — model listing, switching, and consultation
  *   commands  — dispatch arbitrary third-party slash commands (e.g. /ssh, /uv) as tool calls
  *
- * Records runtime status only on model switches and context threshold
- * crossings. Messages are appended to history to preserve prompt caches.
+ * Tells the model when the active model changed since its previous request.
+ * The notice is appended to history to preserve prompt caches.
  *
  * Session actions run on agent_settled through an internal bridge command
  * (see command-actions.ts).
@@ -21,17 +21,8 @@ import { registerTreeRouter } from "./tree.js";
 import { registerModelsRouter } from "./model.js";
 import { registerCommandsRouter } from "./commands.js";
 
-// ── Event-driven status injection state ──
-function contextBucket(pct: number): string | null {
-	if (pct >= 95) return "critical";
-	if (pct >= 85) return "very-high";
-	if (pct >= 70) return "high";
-	return null;
-}
-
 export default function (pi: ExtensionAPI) {
 	let lastModel: string | null = null;
-	let lastContextBucket: string | null = null;
 
 	// Patch ExtensionRunner to capture it for commands(action='run').
 	const patchOk = patchBindCommandContext();
@@ -43,39 +34,17 @@ export default function (pi: ExtensionAPI) {
 	registerModelsRouter(pi);
 	registerCommandsRouter(pi);
 
-	// ── Record runtime status only on state changes ──
+	// ── Model-switch notice ──
 	pi.on("context", async (event, ctx) => {
-		const messages = event.messages;
-		if (!messages || messages.length === 0) return;
-
-		const currentModel = ctx.model;
-		if (!currentModel) return;
-
-		const modelId = `${currentModel.provider}/${currentModel.id}`;
-		const usage = ctx.getContextUsage?.();
-		const ctxPct = (usage && typeof usage.percent === "number") ? Math.min(100, Math.round(usage.percent)) : 0;
-
-		// ── Determine what changed ──
-		const reasons: string[] = [];
-
-		if (lastModel !== null && modelId !== lastModel) {
-			reasons.push(`Switched from model ${lastModel} to model ${modelId}.`);
-		}
+		if (event.messages.length === 0 || !ctx.model) return;
+		const modelId = `${ctx.model.provider}/${ctx.model.id}`;
+		const previous = lastModel;
 		lastModel = modelId;
-
-		const cb = contextBucket(ctxPct);
-		if (cb && cb !== lastContextBucket) {
-			reasons.push(`Context usage: ${ctxPct}%.`);
-		}
-		lastContextBucket = cb;
-
-		// Nothing changed — skip injection entirely.
-		if (reasons.length === 0) return;
-
+		if (previous === null || previous === modelId) return;
 		// Pi appends this after pending tool results, without starting another turn.
 		pi.sendMessage({
 			customType: "pi-status",
-			content: `[pi-control] ${reasons.join(" | ")}`,
+			content: `[pi-control] Switched from model ${previous} to model ${modelId}.`,
 			display: false,
 		}, { triggerTurn: false });
 	});
@@ -114,6 +83,5 @@ export default function (pi: ExtensionAPI) {
 		}
 		clearPending(ctx);
 		lastModel = null;
-		lastContextBucket = null;
 	});
 }
