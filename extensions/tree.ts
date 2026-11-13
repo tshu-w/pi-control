@@ -85,7 +85,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 						"",
 						...groups.slice(0, 5).flat().map((line) => theme.fg("toolOutput", line)),
 						"",
-						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+						theme.fg("muted", `... (${hidden} more lines, ${(context.keyText ?? keyText)("app.tools.expand")} to expand)`),
 					];
 					if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 					return new Text(visible.join("\n"), 0, 0);
@@ -116,7 +116,7 @@ export function registerTreeRouter(pi: ExtensionAPI) {
 					theme.fg("toolOutput", lines[0]!),
 					...itemLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
 					"",
-					theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+					theme.fg("muted", `... (${hidden} more lines, ${(context.keyText ?? keyText)("app.tools.expand")} to expand)`),
 				];
 				if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 				return new Text(visible.join("\n"), 0, 0);

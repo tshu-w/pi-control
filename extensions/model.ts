@@ -136,7 +136,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						theme.fg("toolOutput", lines[0]!),
 						...modelLines.slice(0, 20).map((line) => theme.fg("toolOutput", line)),
 						"",
-						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+						theme.fg("muted", `... (${hidden} more lines, ${(context.keyText ?? keyText)("app.tools.expand")} to expand)`),
 					];
 					if (footerLines.length > 0) visible.push("", ...footerLines.map((line) => styleToolOutput(line, truncated, theme)));
 					return new Text(visible.join("\n"), 0, 0);
@@ -158,7 +158,7 @@ export function registerModelsRouter(pi: ExtensionAPI) {
 						"",
 						...responseLines.slice(0, 15).map((line) => theme.fg("toolOutput", line)),
 						"",
-						theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`),
+						theme.fg("muted", `... (${hidden} more lines, ${(context.keyText ?? keyText)("app.tools.expand")} to expand)`),
 					];
 					if (footerStart >= 0) visible.push("", styleToolOutput(text.slice(footerStart + 2), true, theme));
 					return new Text(visible.join("\n"), 0, 0);

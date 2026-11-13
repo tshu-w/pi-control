@@ -60,7 +60,7 @@ export function registerSessionsRouter(pi: ExtensionAPI) {
 			return renderCollapsed(records.slice(5).join("\n\n"), (hidden) => {
 				const visible = [sections[0]!, ...records.slice(0, 5)]
 					.map((section) => theme.fg("toolOutput", section));
-				visible.push(theme.fg("muted", `... (${hidden} more lines, ${keyText("app.tools.expand")} to expand)`));
+				visible.push(theme.fg("muted", `... (${hidden} more lines, ${(context.keyText ?? keyText)("app.tools.expand")} to expand)`));
 				const footerSections = sections.filter((section) =>
 					/^(?:\[Showing |\[Line )/.test(section) || /^\[\d+ more results\./.test(section),
 				);
